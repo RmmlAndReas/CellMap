@@ -48,14 +48,30 @@ def create_cellpose_tab(parent):
     
     left_column.addLayout(button_layout)
     
-    # Hole filling button row
-    hole_filling_layout = QHBoxLayout()
+    # Hole filling group box
+    cellpose_hole_filling_group = QGroupBox("Fill Holes")
+    hole_filling_group_layout = QVBoxLayout()
+    
+    # Maximum size parameter
+    max_size_layout = QHBoxLayout()
+    max_size_layout.addWidget(QLabel("Maximum size:"))
+    cellpose_max_hole_size_spin = QSpinBox()
+    cellpose_max_hole_size_spin.setMinimum(0)
+    cellpose_max_hole_size_spin.setMaximum(10000)
+    cellpose_max_hole_size_spin.setValue(500)
+    cellpose_max_hole_size_spin.setSpecialValueText("All")
+    cellpose_max_hole_size_spin.setToolTip("Maximum size (in pixels) of holes/gaps to fill. Set to 0 to fill all holes regardless of size.")
+    max_size_layout.addWidget(cellpose_max_hole_size_spin)
+    hole_filling_group_layout.addLayout(max_size_layout)
+    
+    # Fill Holes button
     cellpose_fill_holes_button = QPushButton("Fill Holes")
     cellpose_fill_holes_button.clicked.connect(parent.cellpose_fill_holes)
     cellpose_fill_holes_button.setToolTip("Fill holes in CellPose segmentation results. Processes selected images and fills gaps between cells.")
-    hole_filling_layout.addWidget(cellpose_fill_holes_button)
+    hole_filling_group_layout.addWidget(cellpose_fill_holes_button)
     
-    left_column.addLayout(hole_filling_layout)
+    cellpose_hole_filling_group.setLayout(hole_filling_group_layout)
+    left_column.addWidget(cellpose_hole_filling_group)
     
     # Additional settings group (always active) - two columns
     cellpose_additional_settings_group = QGroupBox("parameters")
@@ -191,6 +207,8 @@ def create_cellpose_tab(parent):
     parent.pushButton0 = pushButton0
     parent.cellpose_defaults_button = cellpose_defaults_button
     parent.cellpose_fill_holes_button = cellpose_fill_holes_button
+    parent.cellpose_hole_filling_group = cellpose_hole_filling_group
+    parent.cellpose_max_hole_size_spin = cellpose_max_hole_size_spin
     parent.cellpose_additional_settings_group = cellpose_additional_settings_group
     parent.cellpose_diameter_spin = cellpose_diameter_spin
     parent.cellpose_flow_threshold_spin = cellpose_flow_threshold_spin

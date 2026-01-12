@@ -1747,13 +1747,19 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 if not isinstance(outline_mask, np.ndarray):
                     outline_mask = np.array(outline_mask)
                 
+                # Get maximum hole size from UI (0 means fill all holes)
+                max_hole_size_value = self.cellpose_max_hole_size_spin.value()
+                max_region_size = max_hole_size_value if max_hole_size_value > 0 else None
+                max_hole_size = None if max_hole_size_value == 0 else max_hole_size_value
+                
                 # Try to use _seg.npy file if available (more accurate)
                 filled_outlines = None
                 seg_npy_path = get_seg_npy_path(image_path)
                 
                 if seg_npy_path and os.path.exists(seg_npy_path):
                     logger.info(f'Using _seg.npy file for hole filling: {seg_npy_path}')
-                    filled_outlines = fill_holes_using_seg_npy(seg_npy_path, max_region_size=500)
+                    # For _seg.npy method, use max_region_size (None means fill all)
+                    filled_outlines = fill_holes_using_seg_npy(seg_npy_path, max_region_size=max_region_size if max_region_size is not None else 1000000)
                     if filled_outlines is not None:
                         logger.info('Successfully filled holes using _seg.npy data')
                 
@@ -1762,7 +1768,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                     logger.info('Using outline-based hole filling method')
                     filled_outlines = fill_holes_in_outline_mask(
                         outline_mask, 
-                        max_hole_size=None,  # Fill all holes
+                        max_hole_size=max_hole_size,  # None means fill all holes
                         extend_membranes=True, 
                         extension_radius=1
                     )
