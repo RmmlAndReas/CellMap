@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="400" height="460" viewBox="0 0 400 460">
+  <!-- Outer border -->
+  <polygon points="200.00,40.00 364.54,135.00 364.54,325.00 200.00,420.00 35.46,325.00 35.46,135.00"
+           fill="none"
+           stroke="#000000"
+           stroke-width="26"
+           stroke-linejoin="round"/>
+  <!-- Inner badge -->
+  <polygon points="200.00,54.00 352.42,142.00 352.42,318.00 200.00,406.00 47.58,318.00 47.58,142.00"
+           fill="#000000"
+           stroke="#FFFFFF"
+           stroke-width="14"
+           stroke-linejoin="round"/>
+  <!-- Wordmark (reduced size) -->
+  <text x="200.0" y="256.0"
+        text-anchor="middle"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="104"
+        font-weight="700"
+        letter-spacing="2"
+        fill="#FFFFFF">
+        CELL
+  </text>
+</svg>

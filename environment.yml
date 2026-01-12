@@ -1,0 +1,38 @@
+name: CellMap
+channels:
+  - conda-forge
+  - defaults
+  - pytorch
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy>=1.7.3
+  - scikit-image>=0.19.3
+  - scikit-learn>=1.0.2
+  - pandas
+  - matplotlib>=3.5.2
+  - pillow>=8.1.2
+  - pyqt6
+  - pytorch
+  - pip
+  - pip:
+    - cellpose
+    - torch
+    - czifile
+    - read-lif
+    - tifffile>=2021.11.2
+    - qtawesome
+    - QtPy>=2.1.0
+    - tqdm
+    - natsort
+    - numexpr
+    - urllib3
+    - pyperclip
+    - prettytable
+    - roifile
+    - elasticdeform
+    - deprecated
+    - Markdown
+    - numba
+    - -e .
+

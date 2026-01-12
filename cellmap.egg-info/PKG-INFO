@@ -1,0 +1,101 @@
+Metadata-Version: 2.4
+Name: cellmap
+Version: 1.0.0
+Summary: CellMap - Cell segmentation and tracking software using Cellpose
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6, <3.13
+Description-Content-Type: text/markdown
+Requires-Dist: cellpose>=2.0
+Requires-Dist: torch
+Requires-Dist: czifile
+Requires-Dist: Markdown
+Requires-Dist: matplotlib>=3.5.2
+Requires-Dist: numpy
+Requires-Dist: Pillow>=8.1.2
+Requires-Dist: PyQt6
+Requires-Dist: read-lif
+Requires-Dist: scikit-image>=0.19.3
+Requires-Dist: scipy>=1.7.3
+Requires-Dist: scikit-learn>=1.0.2
+Requires-Dist: tifffile>=2021.11.2
+Requires-Dist: tqdm
+Requires-Dist: natsort
+Requires-Dist: numexpr
+Requires-Dist: urllib3
+Requires-Dist: qtawesome
+Requires-Dist: pandas
+Requires-Dist: numba
+Requires-Dist: elasticdeform
+Requires-Dist: roifile
+Requires-Dist: prettytable
+Requires-Dist: pyperclip
+Requires-Dist: QtPy>=2.1.0
+Requires-Dist: deprecated
+Requires-Dist: tensorflow
+Requires-Dist: segmentation-models
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# CellMap
+
+CellMap is a Python-based software for cell segmentation and tracking in time-lapse microscopy images.
+
+## Features
+
+- **Cellpose segmentation** - Automatic cell segmentation using Cellpose
+- **Cell tracking** - Track cells across time frames
+- **Cell measurements** - Measure cell properties (area, shape, orientation, etc.)
+- **3D analysis** - 3D surface projection and measurements
+- **SQLite database** - Store and query measurement data
+- **Graphical user interface** - Easy-to-use GUI built with PyQt
+
+## Installation
+
+1. Install [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) (if not already installed)
+
+2. Create and activate conda environment:
+```bash
+conda create -y -n TA python==3.10.12
+conda activate TA
+pip install -U pip
+```
+
+3. Install from source:
+```bash
+pip install -e .
+```
+
+## Usage
+
+Run the GUI:
+```bash
+python -m cellmap
+```
+
+Or after installation:
+```bash
+cellmap
+```
+
+## Workflow
+
+1. **Load Images** - Add images to the file list
+2. **Segment** - Use Cellpose to segment cells
+3. **Track** - Track cells across time frames
+4. **Measure** - Extract cell properties
+5. **Analyze** - Query database and export results
+
+## Dependencies
+
+- cellpose>=2.0
+- torch
+- PyQt5/PyQt6
+- numpy, scipy, scikit-image
+- pandas
+- tifffile, czifile, read-lif
+- And other scientific computing libraries
