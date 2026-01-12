@@ -15,20 +15,7 @@ from utils.logger import TA_logger
 
 logger = TA_logger()
 
-# Try to import optional dependencies
-try:
-    import czifile
-    HAS_CZIFILE = True
-except ImportError:
-    HAS_CZIFILE = False
-    logger.warning("czifile not available, .czi files will not be supported")
-
-try:
-    import read_lif
-    HAS_READ_LIF = True
-except ImportError:
-    HAS_READ_LIF = False
-    logger.warning("read_lif not available, .lif files will not be supported")
+# Optional dependencies removed: czifile and read-lif support has been removed
 
 
 def _create_dir(filename):
@@ -425,71 +412,6 @@ def _read_image_file(filename, serie_to_open=None):
                         metadata['bits'] = bits
             
             image = np.squeeze(tifffile.imread(filename))
-            
-        elif ext == '.czi' and HAS_CZIFILE:
-            # Read CZI file
-            with czifile.CziFile(filename) as czi:
-                image = czi.asarray()
-                image = np.squeeze(image)
-                # Try to extract metadata
-                try:
-                    meta_data = czi.metadata(raw=False)
-                    if 'ImageDocument' in meta_data:
-                        info = meta_data['ImageDocument']['Metadata']['Information']['Image']
-                        if 'SizeX' in info:
-                            metadata['w'] = info['SizeX']
-                        if 'SizeY' in info:
-                            metadata['h'] = info['SizeY']
-                        if 'SizeZ' in info:
-                            metadata['d'] = info['SizeZ']
-                        if 'SizeC' in info:
-                            metadata['c'] = info['SizeC']
-                        if 'ComponentBitCount' in info:
-                            metadata['bits'] = info['ComponentBitCount']
-                except:
-                    pass
-        
-        elif ext == '.lif' and HAS_READ_LIF:
-            # Read LIF file
-            reader = read_lif.Reader(filename)
-            series = reader.getSeries()
-            if serie_to_open is None:
-                chosen = series[0]
-            else:
-                if 0 <= serie_to_open < len(series):
-                    chosen = series[serie_to_open]
-                else:
-                    logger.error('Series index out of range')
-                    return metadata, None
-            
-            meta_data = chosen.getMetadata()
-            metadata['vx'] = meta_data.get('voxel_size_x')
-            metadata['vy'] = meta_data.get('voxel_size_y')
-            metadata['vz'] = meta_data.get('voxel_size_z')
-            metadata['w'] = meta_data.get('voxel_number_x')
-            metadata['h'] = meta_data.get('voxel_number_y')
-            metadata['d'] = meta_data.get('voxel_number_z')
-            metadata['c'] = meta_data.get('channel_number')
-            
-            # Read image data
-            t_frames = chosen.getNbFrames()
-            channels = metadata['c']
-            images = []
-            for T in range(t_frames):
-                zstack = None
-                for i in range(channels):
-                    cur_image = chosen.getFrame(T=T, channel=i)
-                    if zstack is None:
-                        zstack = cur_image
-                    else:
-                        zstack = np.stack([zstack, cur_image], axis=-1)
-                if zstack is not None:
-                    images.append(zstack)
-            
-            if images:
-                image = np.stack(images, axis=0)
-            else:
-                image = None
         
         else:
             # Use skimage for other formats (PNG, JPG, etc.)

@@ -22,7 +22,7 @@ logger = TA_logger()
 
 
 IMAGES_2D = ['.tif', '.tiff', '.jpg', '.jpeg', '.png', '.tga', '.bmp']
-STACKS = ['.tif', '.tiff', '.lif', '.czi', '.lif', '.lsm']
+STACKS = ['.tif', '.tiff', '.lsm']
 LISTS = ['.lst', '.txt']
 FASTA = ['.fa','.fna','.fasta']
 PYTA_DEFAULT = IMAGES_2D + LISTS

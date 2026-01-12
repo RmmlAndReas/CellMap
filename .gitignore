@@ -2,3 +2,4 @@ archive
 .cursor
 test
 __pycache__/
+cellmap.egg-infos

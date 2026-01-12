@@ -1677,6 +1677,126 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         finally:
             gc.collect()
 
+    def cellpose_fill_holes(self):
+        """Fill holes in CellPose segmentation results for selected images."""
+        # Check if any images are selected
+        selected_images = self.get_selection_multiple()
+        if not selected_images:
+            logger.warning('No images selected. Please select images in the selection pane to fill holes.')
+            self.blinker.blink(self.list)
+            return
+        
+        logger.info(f'Starting CellPose hole filling for {len(selected_images)} image(s)')
+        self.launch_in_a_tread(self._cellpose_fill_holes)
+
+    def _cellpose_fill_holes(self, progress_callback):
+        """Fill holes in CellPose segmentation results."""
+        from segmentation.cellpose import (
+            fill_holes_in_outline_mask, 
+            fill_holes_using_seg_npy, 
+            get_seg_npy_path, 
+            get_output_path,
+            _call_progress_callback
+        )
+        from utils.image_io import Img
+        from tracking.tools import smart_name_parser
+        import os
+        
+        # Get selected images
+        selected_images = self.get_selection_multiple()
+        if not selected_images:
+            logger.warning('No images selected for CellPose hole filling')
+            return
+        
+        total_images = len(selected_images)
+        logger.info(f'Processing {total_images} image(s) for hole filling')
+        
+        success_count = 0
+        error_count = 0
+        
+        for idx, image_path in enumerate(selected_images):
+            if early_stop.stop:
+                logger.info('CellPose hole filling stopped by user')
+                break
+            
+            try:
+                # Update progress
+                if progress_callback:
+                    progress = int((idx / total_images) * 100)
+                    _call_progress_callback(progress_callback, progress)
+                
+                logger.info(f'Processing image {idx + 1}/{total_images}: {os.path.basename(image_path)}')
+                
+                # Find the outlines.tif file for this image
+                outlines_path = get_output_path(image_path)
+                
+                if not os.path.exists(outlines_path):
+                    logger.warning(f'No outlines.tif found for {image_path} at {outlines_path}, skipping')
+                    error_count += 1
+                    continue
+                
+                # Load the outlines mask
+                outline_img = Img(outlines_path)
+                if outline_img.has_c():
+                    # Use first channel if multi-channel
+                    outline_mask = outline_img[..., 0] if outline_img.ndim > 2 else outline_img
+                else:
+                    outline_mask = outline_img
+                
+                # Convert to numpy array if needed
+                if not isinstance(outline_mask, np.ndarray):
+                    outline_mask = np.array(outline_mask)
+                
+                # Try to use _seg.npy file if available (more accurate)
+                filled_outlines = None
+                seg_npy_path = get_seg_npy_path(image_path)
+                
+                if seg_npy_path and os.path.exists(seg_npy_path):
+                    logger.info(f'Using _seg.npy file for hole filling: {seg_npy_path}')
+                    filled_outlines = fill_holes_using_seg_npy(seg_npy_path, max_region_size=500)
+                    if filled_outlines is not None:
+                        logger.info('Successfully filled holes using _seg.npy data')
+                
+                # Fall back to outline-based method if _seg.npy not available or failed
+                if filled_outlines is None:
+                    logger.info('Using outline-based hole filling method')
+                    filled_outlines = fill_holes_in_outline_mask(
+                        outline_mask, 
+                        max_hole_size=None,  # Fill all holes
+                        extend_membranes=True, 
+                        extension_radius=1
+                    )
+                
+                # Save the filled outlines back to outlines.tif
+                try:
+                    Img(filled_outlines, dimensions='hw').save(outlines_path)
+                    logger.info(f'Filled outlines saved to {outlines_path}')
+                    success_count += 1
+                except Exception as e:
+                    logger.error(f'Failed to save filled outlines for {image_path}: {e}')
+                    error_count += 1
+                    
+            except Exception as e:
+                logger.error(f'Failed to fill holes for {image_path}: {e}')
+                traceback.print_exc()
+                error_count += 1
+        
+        # Final progress update
+        if progress_callback:
+            _call_progress_callback(progress_callback, 100)
+        
+        # Log summary
+        logger.info(f'CellPose hole filling completed: {success_count} succeeded, {error_count} failed out of {total_images} images')
+        
+        # Show completion message
+        if success_count > 0:
+            message = f"Successfully filled holes in {success_count} image(s)"
+            if error_count > 0:
+                message += f", {error_count} image(s) failed"
+            logger.info(message)
+        elif error_count > 0:
+            logger.warning(f"Failed to fill holes in {error_count} image(s)")
+
     def fill_holes(self):
         """Fill holes in the current mask and extend membranes to ensure connectivity.
         If multiple files are selected, processes all of them in batch."""

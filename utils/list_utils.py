@@ -27,7 +27,7 @@ def list_files_in_child_dirs(parent_directory, depth=1):
     return tif_files
 
 
-def create_list(input_folder, save=False, output_name=None, extensions=['*.tif', '*.tiff', '*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tga', '*.lif'], sort_type='natsort', recursive=False):
+def create_list(input_folder, save=False, output_name=None, extensions=['*.tif', '*.tiff', '*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tga'], sort_type='natsort', recursive=False):
     """
     Create a list of files from a folder or pattern.
     

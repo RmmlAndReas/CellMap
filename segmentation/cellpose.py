@@ -442,37 +442,14 @@ def segment_image(image_path, model_type='cyto', diameter=None,
     outlines = extract_outlines(masks, mode='boundaries')
     output_path = get_output_path(image_path)
     
-    # Fill holes automatically at the end of segmentation
-    _call_progress_callback(progress_callback, 90)
-    logger.info('Filling holes in segmentation result...')
-    
-    # Try to use _seg.npy file if available (more accurate)
-    filled_outlines = None
-    seg_file_path = os.path.join(output_dir, f'{image_name}_seg.npy')
-    if os.path.exists(seg_file_path):
-        logger.info(f'Using _seg.npy file for hole filling: {seg_file_path}')
-        filled_outlines = fill_holes_using_seg_npy(seg_file_path, max_region_size=500)
-        if filled_outlines is not None:
-            logger.info('Successfully filled holes using _seg.npy data')
-    
-    # Fall back to outline-based method if _seg.npy not available or failed
-    if filled_outlines is None:
-        logger.info('Using outline-based hole filling method')
-        filled_outlines = fill_holes_in_outline_mask(
-            outlines, 
-            max_hole_size=None,  # Fill all holes
-            extend_membranes=True, 
-            extension_radius=1
-        )
-    
-    # Save the filled outlines
-    outline_img = Img(filled_outlines)
+    # Save the outlines without hole filling (hole filling is now a separate step)
+    outline_img = Img(outlines)
     outline_img.save(output_path)
-    logger.info(f'Saved filled outlines to: {output_path}')
+    logger.info(f'Saved outlines to: {output_path}')
     
     _call_progress_callback(progress_callback, 100)
     
-    return filled_outlines
+    return outlines
 
 
 def segment_batch(image_list, model_type='cyto', diameter=None, 
@@ -728,34 +705,11 @@ def segment_batch(image_list, model_type='cyto', diameter=None,
             try:
                 outlines = extract_outlines(masks, mode='boundaries')
                 output_path = get_output_path(img_path)
-                output_dir = os.path.dirname(output_path)
                 
-                # Fill holes automatically at the end of segmentation
-                logger.info(f'Filling holes in segmentation result for {image_name}...')
-                
-                # Try to use _seg.npy file if available (more accurate)
-                filled_outlines = None
-                seg_file_path = os.path.join(output_dir, f'{image_name}_seg.npy')
-                if os.path.exists(seg_file_path):
-                    logger.info(f'Using _seg.npy file for hole filling: {seg_file_path}')
-                    filled_outlines = fill_holes_using_seg_npy(seg_file_path, max_region_size=500)
-                    if filled_outlines is not None:
-                        logger.info('Successfully filled holes using _seg.npy data')
-                
-                # Fall back to outline-based method if _seg.npy not available or failed
-                if filled_outlines is None:
-                    logger.info('Using outline-based hole filling method')
-                    filled_outlines = fill_holes_in_outline_mask(
-                        outlines, 
-                        max_hole_size=None,  # Fill all holes
-                        extend_membranes=True, 
-                        extension_radius=1
-                    )
-                
-                # Save the filled outlines
-                outline_img = Img(filled_outlines)
+                # Save the outlines without hole filling (hole filling is now a separate step)
+                outline_img = Img(outlines)
                 outline_img.save(output_path)
-                logger.info(f'Saved filled outlines to: {output_path}')
+                logger.info(f'Saved outlines to: {output_path}')
                 output_paths.append(output_path)
             except Exception as e:
                 print(f"Error saving handCorrection format for {img_path}: {e}")

@@ -48,6 +48,15 @@ def create_cellpose_tab(parent):
     
     left_column.addLayout(button_layout)
     
+    # Hole filling button row
+    hole_filling_layout = QHBoxLayout()
+    cellpose_fill_holes_button = QPushButton("Fill Holes")
+    cellpose_fill_holes_button.clicked.connect(parent.cellpose_fill_holes)
+    cellpose_fill_holes_button.setToolTip("Fill holes in CellPose segmentation results. Processes selected images and fills gaps between cells.")
+    hole_filling_layout.addWidget(cellpose_fill_holes_button)
+    
+    left_column.addLayout(hole_filling_layout)
+    
     # Additional settings group (always active) - two columns
     cellpose_additional_settings_group = QGroupBox("parameters")
     additional_settings_layout = QHBoxLayout()  # Changed to horizontal for two columns
@@ -181,6 +190,7 @@ def create_cellpose_tab(parent):
     parent.cellpose_rois_label = cellpose_rois_label
     parent.pushButton0 = pushButton0
     parent.cellpose_defaults_button = cellpose_defaults_button
+    parent.cellpose_fill_holes_button = cellpose_fill_holes_button
     parent.cellpose_additional_settings_group = cellpose_additional_settings_group
     parent.cellpose_diameter_spin = cellpose_diameter_spin
     parent.cellpose_flow_threshold_spin = cellpose_flow_threshold_spin
