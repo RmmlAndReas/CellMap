@@ -13,18 +13,18 @@ CellMap is a Python-based software for cell segmentation and tracking in time-la
 
 ## Installation
 
-1. Install [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) (if not already installed)
-
-2. Create and activate conda environment:
+1. Clone the repository:
 ```bash
-conda create -y -n TA python==3.10.12
-conda activate TA
-pip install -U pip
+git clone https://github.com/RmmlAndReas/CellMap
+cd CellMap
 ```
 
-3. Install from source:
+2. Install [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) (if not already installed)
+
+3. Create and activate conda environment from the environment file:
 ```bash
-pip install -e .
+conda env create -f environment.yml
+conda activate CellMap
 ```
 
 ## Usage
