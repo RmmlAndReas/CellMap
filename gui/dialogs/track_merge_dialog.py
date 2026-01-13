@@ -27,8 +27,7 @@ class TrackMergeDialog(QDialog):
         track_x_hex = f"0x{track_id_x:06x}" if track_id_x is not None else "N/A"
         track_y_hex = f"0x{track_id_y:06x}" if track_id_y is not None else "N/A"
         
-        info_text = f"Do you want to merge track {track_x_hex} with track {track_y_hex}?\n\n"
-        info_text += f"This will merge all frames of track {track_y_hex} into track {track_x_hex}."
+        info_text = "Want to merge?"
         
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)

@@ -12,7 +12,7 @@ from skimage.measure import label
 from skimage.segmentation import find_boundaries, watershed
 from skimage.morphology import remove_small_holes, skeletonize
 from utils.image_io import Img
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 import logging
 
 # Use TA_logger to ensure logs appear in GUI log box
@@ -58,18 +58,18 @@ except ImportError:
 
 def get_output_path(image_path):
     """
-    Get the output path for outlines.tif based on input image path.
+    Get the output path for handCorrection.tif based on input image path.
     
     Args:
         image_path: Path to input image
         
     Returns:
-        str: Path to output outlines.tif file (cellpose-generated outlines)
+        str: Path to output handCorrection.tif file (cellpose-generated outlines)
     """
     filename_without_ext = os.path.splitext(image_path)[0]
     output_dir = filename_without_ext
     os.makedirs(output_dir, exist_ok=True)
-    return os.path.join(output_dir, 'outlines.tif')
+    return os.path.join(output_dir, 'handCorrection.tif')
 
 
 def get_seg_npy_path(image_path):
@@ -206,9 +206,9 @@ def _call_progress_callback(progress_callback, value):
 
 def convert_to_handcorrection_format(masks):
     """
-    Convert Cellpose label masks to outlines.tif format.
+    Convert Cellpose label masks to handCorrection.tif format.
     
-    The outlines format uses:
+    The handCorrection format uses:
     - Outlines (boundaries) = 255 (white)
     - Background/cells = 0 (black)
     
@@ -216,7 +216,7 @@ def convert_to_handcorrection_format(masks):
         masks: Label mask from Cellpose (0=background, 1-N=cell IDs)
         
     Returns:
-        numpy.ndarray: Outline mask in outlines.tif format
+        numpy.ndarray: Outline mask in handCorrection.tif format
     """
     # Extract outlines instead of binary mask
     return extract_outlines(masks, mode='boundaries')
@@ -284,7 +284,7 @@ def segment_image(image_path, model_type='cyto', diameter=None,
         progress_callback: Optional callback for progress updates
         
     Returns:
-        numpy.ndarray: Outline mask in outlines.tif format
+        numpy.ndarray: Outline mask in handCorrection.tif format
     """
     if not CELLPOSE_AVAILABLE:
         raise ImportError("Cellpose is not installed. Please install with: pip install cellpose")
@@ -438,7 +438,7 @@ def segment_image(image_path, model_type='cyto', diameter=None,
     finally:
         os.chdir(original_cwd)
     
-    # Save outlines as outlines.tif format (from cellpose)
+    # Save outlines as handCorrection.tif format (from cellpose)
     outlines = extract_outlines(masks, mode='boundaries')
     output_path = get_output_path(image_path)
     
@@ -699,7 +699,7 @@ def segment_batch(image_list, model_type='cyto', diameter=None,
             import traceback
             traceback.print_exc()
         
-        # Save outlines as outlines.tif format (from cellpose)
+        # Save outlines as handCorrection.tif format (from cellpose)
         _call_progress_callback(progress_callback, 90)
         for img_path, masks, image_name in zip(all_img_paths, all_masks, all_image_names):
             try:
@@ -879,7 +879,7 @@ def fill_holes_using_seg_npy(seg_npy_path, max_region_size=500):
         max_region_size: Maximum size (in pixels) of background regions to merge (default: 500)
         
     Returns:
-        numpy.ndarray: Outline mask (outlines.tif format) with holes filled, or None if error
+        numpy.ndarray: Outline mask (handCorrection.tif format) with holes filled, or None if error
     """
     from skimage.measure import regionprops
     from scipy.ndimage import distance_transform_edt

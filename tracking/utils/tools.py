@@ -38,25 +38,15 @@ def get_TA_file(file_name_without_ext, TA_file):
 
 def get_mask_file(file_name_without_ext):
     """
-    Get the mask file path, trying handCorrection.tif first, then falling back to outlines.tif.
+    Get the mask file path for handCorrection.tif.
     
     Args:
         file_name_without_ext (str): File name without extension.
         
     Returns:
-        str: Path to the mask file, or None if neither file exists.
+        str: Path to the handCorrection.tif file.
     """
-    # Try handCorrection.tif first (legacy name)
     hand_correction_path = get_TA_file(file_name_without_ext, 'handCorrection.tif')
-    if os.path.exists(hand_correction_path):
-        return hand_correction_path
-    
-    # Fallback to outlines.tif (new name)
-    outlines_path = get_TA_file(file_name_without_ext, 'outlines.tif')
-    if os.path.exists(outlines_path):
-        return outlines_path
-    
-    # Return the legacy path even if it doesn't exist (for error messages)
     return hand_correction_path
 
 

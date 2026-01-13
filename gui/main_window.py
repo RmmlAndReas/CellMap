@@ -27,7 +27,7 @@ from utils.image_io import Img
 from utils.image_utils import blend, to_stack, mask_colors
 from gui.widgets.overlay_widget import Overlay
 from gui.dialogs.tracking_static_dialog import TrackingDialog
-from tracking.last_tracking_based_on_matching_or_on_translation_from_mermaid_warp import match_by_max_overlap_lst
+from tracking.core import track_cells_static_tissue
 from utils.qthandler import XStream, QtHandler
 from gui.utils.blinker import Blinker
 from utils.list_utils import create_list
@@ -40,12 +40,12 @@ from gui.widgets.tissue_analyzer_paint_widget import tascrollablepaint
 from gui.tabs.analysis_tab import create_analysis_tab
 from gui.tabs.tracking_tab import create_tracking_tab
 from gui.tabs.cellpose_tab import create_cellpose_tab
-from tracking.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
-from tracking.tools import smart_name_parser
+from tracking.utils.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
+from tracking.utils.tools import smart_name_parser
 import qtawesome as qta
 from utils.early_stopper import early_stop
 import logging
-from tracking.tracking_yet_another_approach_pyramidal_registration_n_neo_swapping_correction import track_cells_dynamic_tissue
+from tracking.core import track_cells_dynamic_tissue
 from utils.logger import TA_logger
 from utils.fake_worker import FakeWorker
 from utils.worker import Worker
@@ -322,6 +322,8 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             (QtCore.Qt.Key_Escape, self.escape),
             (QtCore.Qt.Key_Space, self.nextFrame),
             (QtCore.Qt.Key_Backspace, self.prevFrame),
+            (QtCore.Qt.Key_Right, self.nextFrame),
+            (QtCore.Qt.Key_Left, self.prevFrame),
         ]
         
         for key, handler in shortcuts:
@@ -467,7 +469,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             if hasattr(self.paint, 'paint'):
                 self.paint.paint.selection_mode = False
                 self.paint.paint.track_view_mode = False  # Disable track view mode to enable brush cursor
-                self.paint.paint.track_merge_mode = False  # Disable track merge mode
+                self.paint.paint.track_correction_mode = False  # Disable track correction mode
                 self.paint.paint.hovered_track_id = None
                 self.paint.paint.drawing_enabled = True  # Ensure brush tool is enabled
                 # Clear tracked image (not needed in segmentation tab)
@@ -534,7 +536,14 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             layout.itemAt(i).widget().setParent(None)
 
     def escape(self):
-        """Exit fullscreen mode."""
+        """Handle Escape key: deselect all cells in tracking tab, or exit fullscreen mode."""
+        # Check if we're in the tracking tab and have selected cells
+        current_tab_idx, tab_name = self.get_cur_tab_index_and_name()
+        if tab_name == 'tracking' and self.selected_track_ids:
+            self.select_none_cells()
+            return
+        
+        # Otherwise, handle fullscreen exit
         if self.Stack.isFullScreen():
             self.fullScreen()
 
@@ -587,10 +596,44 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         print('down')
 
     def nextFrame(self):
-        print('next frame pressed')
+        """Navigate to the next image in the list."""
+        try:
+            current_idx = self.get_selection_index()
+            if current_idx is None:
+                # If nothing is selected, start at index 0
+                current_idx = -1
+            
+            # Get the full list to check bounds
+            lst = self.get_full_list(warn_on_empty_list=False)
+            if not lst:
+                return
+            
+            # Navigate to next frame
+            next_idx = current_idx + 1
+            if next_idx < len(lst):
+                self.navigate_to_frame(next_idx)
+        except Exception as e:
+            logger.error(f'Error navigating to next frame: {e}')
+            traceback.print_exc()
 
     def prevFrame(self):
-        print('prev frame pressed')
+        """Navigate to the previous image in the list."""
+        try:
+            current_idx = self.get_selection_index()
+            if current_idx is None:
+                # If nothing is selected, start at the end
+                lst = self.get_full_list(warn_on_empty_list=False)
+                if not lst:
+                    return
+                current_idx = len(lst)
+            
+            # Navigate to previous frame
+            prev_idx = current_idx - 1
+            if prev_idx >= 0:
+                self.navigate_to_frame(prev_idx)
+        except Exception as e:
+            logger.error(f'Error navigating to previous frame: {e}')
+            traceback.print_exc()
 
     def get_current_TA_path(self):
         """Get current TA path from selection."""
@@ -657,7 +700,6 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 # Trigger preview update
                 from gui.handlers.tab_handler import update_preview_for_tab
                 update_preview_for_tab(self)
-                logger.info(f'Navigated to frame {frame_idx + 1}')
             else:
                 logger.warning(f'Frame index {frame_idx} is out of range (0-{qlist_widget.count() - 1})')
         except Exception as e:
@@ -851,7 +893,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
 
     def _track_cells_static(self, progress_callback, lst=None, channel_of_interest=None, recursive_assignment=False, warp_using_mermaid_if_map_is_available=True):
         """Track cells using static matching algorithm."""
-        match_by_max_overlap_lst(lst, channel_of_interest=channel_of_interest, recursive_assignment=recursive_assignment,
+        track_cells_static_tissue(lst, channel_of_interest=channel_of_interest, recursive_assignment=recursive_assignment,
                                  warp_using_mermaid_if_map_is_available=warp_using_mermaid_if_map_is_available,
                                  pre_register=True, progress_callback=progress_callback)
         logger.info('Creating correspondence between local cell id and track/global cell id')
@@ -886,10 +928,16 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         
         # Get tracking parameters from UI widgets
         pyramidal_depth = self.pyramidal_depth_spinbox.value()
+        threshold_translation = getattr(self, 'threshold_translation_spinbox', None)
+        if threshold_translation is not None:
+            threshold_translation = threshold_translation.value()
+        else:
+            threshold_translation = 20  # Default value
         max_iter = self.max_iter_spinbox.value()
-        self.launch_in_a_tread(partial(self._track_cells_dynamic, pyramidal_depth=pyramidal_depth, max_iter=max_iter))
+        tracking_method = self.tracking_method_combo.currentData()  # Get the data value ("pyramidal")
+        self.launch_in_a_tread(partial(self._track_cells_dynamic, pyramidal_depth=pyramidal_depth, threshold_translation=threshold_translation, max_iter=max_iter, tracking_method=tracking_method))
 
-    def _track_cells_dynamic(self, progress_callback, pyramidal_depth=3, max_iter=15):
+    def _track_cells_dynamic(self, progress_callback, pyramidal_depth=3, threshold_translation=20, max_iter=15, tracking_method='pyramidal'):
         """Track cells using dynamic tissue tracking algorithm."""
         lst = self.get_full_list(warn_on_empty_list=False)
         if not lst or not self.check_channel_is_selected():
@@ -897,8 +945,8 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         # Ensure the list is sorted alphabetically before tracking
         lst = natsorted(lst)
         track_cells_dynamic_tissue(lst, channel=self.paint.get_selected_channel(), 
-                                   PYRAMIDAL_DEPTH=pyramidal_depth, MAX_ITER=max_iter, 
-                                   progress_callback=progress_callback)
+                                   PYRAMIDAL_DEPTH=pyramidal_depth, THRESHOLD_TRANSLATION=threshold_translation, MAX_ITER=max_iter, 
+                                   progress_callback=progress_callback, tracking_method=tracking_method)
         logger.info('Creating correspondence between local cell id and track/global cell id')
         add_localID_to_trackID_correspondance_in_DB(lst, progress_callback)
         # Calculate track completeness for all tracks after tracking completes
@@ -981,61 +1029,328 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         else:
             logger.info('Cell selection mode disabled.')
     
-    def toggle_track_merge_mode(self):
-        """Toggle track merge mode on/off."""
+    def toggle_track_correction_mode(self):
+        """Toggle track correction mode on/off."""
         # Check if we're in Tracking tab
         current_tab_idx, tab_name = self.get_cur_tab_index_and_name()
         if tab_name != 'tracking':
-            logger.warning('Track merge mode is only available in the Tracking tab')
-            if hasattr(self, 'track_merge_button'):
-                self.track_merge_button.setChecked(False)
+            logger.warning('Track correction mode is only available in the Tracking tab')
+            if hasattr(self, 'track_correction_button'):
+                self.track_correction_button.setChecked(False)
             return
         
         # Check if tracked image exists before enabling
-        if not hasattr(self, 'track_merge_mode_active'):
-            self.track_merge_mode_active = False
+        if not hasattr(self, 'track_correction_mode_active'):
+            self.track_correction_mode_active = False
         
-        if not self.track_merge_mode_active:
+        if not self.track_correction_mode_active:
             current_file = self.get_selection()
             if current_file:
                 if hasattr(self.paint, 'paint'):
                     if not self.paint.paint.load_tracked_image(current_file):
                         logger.warning('Tracked cells image not found. Please track cells first.')
-                        if hasattr(self, 'track_merge_button'):
-                            self.track_merge_button.setChecked(False)
+                        if hasattr(self, 'track_correction_button'):
+                            self.track_correction_button.setChecked(False)
                         return
         
-        self.track_merge_mode_active = not self.track_merge_mode_active
+        self.track_correction_mode_active = not self.track_correction_mode_active
         
-        if hasattr(self, 'track_merge_button'):
-            self.track_merge_button.setChecked(self.track_merge_mode_active)
+        if hasattr(self, 'track_correction_button'):
+            self.track_correction_button.setChecked(self.track_correction_mode_active)
         
-        # Update paint widget merge mode
+        # Update paint widget correction mode
         if hasattr(self.paint, 'paint'):
-            self.paint.paint.track_merge_mode = self.track_merge_mode_active
-            if not self.track_merge_mode_active:
-                # Clear merge state when disabling
-                self.paint.paint.track_merge_source_track_id = None
-                self.paint.paint.track_merge_source_frame_idx = None
+            self.paint.paint.track_correction_mode = self.track_correction_mode_active
+            if not self.track_correction_mode_active:
+                # Clear correction state when disabling
+                self.paint.paint.track_correction_selected_cell_id = None
+                self.paint.paint.track_correction_marked_cells = {}
+                self.paint.paint.track_correction_circles = {}
                 self.paint.paint.hovered_track_id = None
+                # Restore cursor behavior
+                self.paint.paint.force_cursor_to_be_visible(False)
                 self.paint.paint.update()
                 # Re-enable track view mode if completeness overlay is enabled
                 if hasattr(self, 'track_completeness_overlay_enabled') and self.track_completeness_overlay_enabled:
                     if (not hasattr(self, 'selection_mode_active') or not self.selection_mode_active):
                         self.paint.paint.track_view_mode = True
             else:
-                # Disable other modes when enabling merge mode
+                # Disable other modes when enabling correction mode
                 self.paint.paint.selection_mode = False
-                self.paint.paint.track_view_mode = False
-                # Load tracked image when enabling merge mode
+                self.paint.paint.track_view_mode = True  # Enable track view mode for click detection
+                # Make cursor visible in correction mode
+                self.paint.paint.unsetCursor()
+                self.paint.paint.force_cursor_to_be_visible(True)
+                # Ensure paint widget has focus to receive keyboard events
+                self.paint.paint.setFocus()
+                # Load tracked image when enabling correction mode
                 current_file = self.get_selection()
                 if current_file:
                     self.paint.paint.load_tracked_image(current_file)
+                # Trigger update
+                self.paint.paint.update()
         
-        if self.track_merge_mode_active:
-            logger.info('Track merge mode enabled. Click first cell, then navigate and click second cell.')
+        if self.track_correction_mode_active:
+            logger.info('Track correction mode enabled. Click a cell to start, then navigate frames and click cells to mark them. Press Enter when done.')
         else:
-            logger.info('Track merge mode disabled.')
+            logger.info('Track correction mode disabled.')
+    
+    def set_track_correction_circle_size(self, size):
+        """Set the circle size for track correction markers."""
+        if hasattr(self.paint, 'paint'):
+            self.paint.paint.track_correction_circle_size = size
+            self.paint.paint.update()
+    
+    def apply_track_correction(self):
+        """
+        Apply track correction: assign new track ID to all marked cells.
+        If a track is selected, also use the highlighted cell in frames without manual clicks.
+        """
+        if not hasattr(self.paint, 'paint'):
+            return
+        
+        paint_widget = self.paint.paint
+        
+        # Get file list
+        file_list = self.get_full_list(warn_on_empty_list=False) or []
+        if not file_list:
+            logger.error('No files in list.')
+            return
+        
+        # Check if we have a selected track (for auto-filling unmarked frames)
+        selected_track_id = paint_widget.track_correction_selected_cell_id
+        
+        # Check if there are any marked cells OR a selected track
+        if not paint_widget.track_correction_marked_cells and selected_track_id is None:
+            logger.warning('No cells marked for correction and no track selected.')
+            if hasattr(paint_widget, 'statusBar') and paint_widget.statusBar:
+                paint_widget.statusBar.showMessage('No cells marked for correction.')
+            return
+        
+        # Generate new unique track ID
+        import os
+        import numpy as np
+        from colors.colorgen import get_unique_random_color_int24
+        from tracking.utils.tools import smart_name_parser, get_mask_file
+        from utils.image_io import Img
+        from utils.image_utils import RGB_to_int24, int24_to_RGB
+        from tracking.utils.track_correction import assign_id
+        from skimage.measure import label, regionprops
+        
+        # Get all existing track IDs to avoid collisions
+        existing_ids = set()
+        for file_path in file_list:
+            tracked_cell_path = smart_name_parser(file_path, ordered_output='tracked_cells_resized.tif')
+            try:
+                if os.path.exists(tracked_cell_path):
+                    tracked_cells = RGB_to_int24(Img(tracked_cell_path))
+                    existing_ids.update(np.unique(tracked_cells))
+            except:
+                pass
+        
+        new_track_id = get_unique_random_color_int24(forbidden_colors=list(existing_ids))
+        logger.info(f'Generated new track ID {new_track_id:06x} for correction')
+        
+        # Helper function to find cell centroid for a given track_id in a frame
+        def find_cell_centroid_for_track(tracked_cells, labeled_mask, track_id):
+            """Find the centroid of the cell with the given track_id."""
+            # Find where this track_id appears in the tracked image
+            track_mask = (tracked_cells == track_id)
+            if not np.any(track_mask):
+                return None
+            
+            # Find which local_id(s) correspond to this track
+            # Get unique local_ids in the region where track_id appears
+            overlapping_local_ids = np.unique(labeled_mask[track_mask])
+            overlapping_local_ids = overlapping_local_ids[overlapping_local_ids != 0]  # Remove background
+            
+            if len(overlapping_local_ids) == 0:
+                return None
+            
+            # Use the largest overlapping local_id (most likely the correct cell)
+            largest_local_id = None
+            largest_size = 0
+            for local_id in overlapping_local_ids:
+                local_mask = (labeled_mask == local_id)
+                overlap_size = np.sum(track_mask & local_mask)
+                if overlap_size > largest_size:
+                    largest_size = overlap_size
+                    largest_local_id = local_id
+            
+            if largest_local_id is None:
+                return None
+            
+            # Get centroid of this cell
+            cell_mask = (labeled_mask == largest_local_id)
+            props = regionprops(cell_mask.astype(np.uint8))
+            if props:
+                centroid = props[0].centroid  # Returns (row, col) = (y, x)
+                return (int(centroid[1]), int(centroid[0]))  # Return (x, y)
+            
+            return None
+        
+        # Determine which frames to process
+        # If we have a selected track, process all frames where it exists
+        frames_to_process = set(paint_widget.track_correction_marked_cells.keys())
+        
+        if selected_track_id is not None:
+            # Find all frames where the selected track exists
+            for frame_idx in range(len(file_list)):
+                file_path = file_list[frame_idx]
+                tracked_cell_path = smart_name_parser(file_path, ordered_output='tracked_cells_resized.tif')
+                if os.path.exists(tracked_cell_path):
+                    try:
+                        tracked_cells = RGB_to_int24(Img(tracked_cell_path))
+                        if np.any(tracked_cells == selected_track_id):
+                            frames_to_process.add(frame_idx)
+                    except:
+                        pass
+        
+        # Process each frame
+        affected_frames = []
+        for frame_idx in frames_to_process:
+            if frame_idx >= len(file_list):
+                continue
+            
+            file_path = file_list[frame_idx]
+            tracked_cell_path = smart_name_parser(file_path, ordered_output='tracked_cells_resized.tif')
+            
+            if not os.path.exists(tracked_cell_path):
+                logger.warning(f'Tracked cells file not found: {tracked_cell_path}')
+                continue
+            
+            try:
+                # Load tracked cells image
+                tracked_cells = RGB_to_int24(Img(tracked_cell_path))
+                
+                # Load segmentation mask to get local_id from (x, y) positions
+                filename_without_ext = smart_name_parser(file_path, ordered_output='full_no_ext')
+                mask_file_path = get_mask_file(filename_without_ext)
+                
+                # Try alternative mask files
+                if not os.path.exists(mask_file_path):
+                    handCorrection1, _ = smart_name_parser(file_path, ordered_output=['handCorrection.png', 'handCorrection.tif'])
+                    if os.path.isfile(handCorrection1):
+                        mask_file_path = handCorrection1
+                
+                if not os.path.exists(mask_file_path):
+                    logger.warning(f'Segmentation mask not found for {file_path}, skipping frame {frame_idx}')
+                    continue
+                
+                # Load and label segmentation mask
+                cell_id_image = Img(mask_file_path)
+                if cell_id_image is None:
+                    logger.warning(f'Could not load segmentation mask: {mask_file_path}')
+                    continue
+                
+                if len(cell_id_image.shape) >= 3:
+                    cell_id_image = cell_id_image[..., 0]
+                
+                # Label the mask (background=255 for handCorrection format)
+                labeled_mask = label(cell_id_image, connectivity=1, background=255)
+                
+                # Collect cells to process: manual clicks take priority
+                cells_to_process = []
+                
+                # First, add manually marked cells (circles override)
+                marked_cells = paint_widget.track_correction_marked_cells.get(frame_idx, [])
+                for img_x, img_y, old_track_id in marked_cells:
+                    # Check bounds
+                    if (img_y < 0 or img_y >= labeled_mask.shape[0] or
+                        img_x < 0 or img_x >= labeled_mask.shape[1]):
+                        continue
+                    
+                    # Get local_id at position
+                    local_id = labeled_mask[img_y, img_x]
+                    if local_id == 0:  # Background
+                        continue
+                    
+                    cells_to_process.append(local_id)
+                
+                # If no manual clicks in this frame, and we have a selected track, use the highlighted cell
+                if not cells_to_process and selected_track_id is not None:
+                    centroid = find_cell_centroid_for_track(tracked_cells, labeled_mask, selected_track_id)
+                    if centroid is not None:
+                        img_x, img_y = centroid
+                        # Get local_id at centroid position
+                        if (img_y >= 0 and img_y < labeled_mask.shape[0] and
+                            img_x >= 0 and img_x < labeled_mask.shape[1]):
+                            local_id = labeled_mask[img_y, img_x]
+                            if local_id != 0:  # Not background
+                                cells_to_process.append(local_id)
+                                logger.info(f'Frame {frame_idx}: Using highlighted cell (track {selected_track_id:06x}) at ({img_x}, {img_y})')
+                
+                # Process all collected cells
+                modified = False
+                for local_id in cells_to_process:
+                    # Get all pixels belonging to this local_id
+                    cell_mask = (labeled_mask == local_id)
+                    
+                    # Assign new track ID to all pixels of this cell
+                    tracked_cells[cell_mask] = new_track_id
+                    modified = True
+                
+                # Save if modified
+                if modified:
+                    try:
+                        file_mtime_before = None
+                        if os.path.exists(tracked_cell_path):
+                            file_mtime_before = os.path.getmtime(tracked_cell_path)
+                        
+                        logger.info(f'Saving tracked cells to {tracked_cell_path} (frame {frame_idx})')
+                        Img(int24_to_RGB(tracked_cells), dimensions='hwc').save(tracked_cell_path, mode='raw')
+                        
+                        if os.path.exists(tracked_cell_path):
+                            file_mtime_after = os.path.getmtime(tracked_cell_path)
+                            if file_mtime_before != file_mtime_after:
+                                logger.info(f'Successfully saved tracked cells to {tracked_cell_path} (mtime changed)')
+                                affected_frames.append(frame_idx)
+                            else:
+                                logger.warning(f'File {tracked_cell_path} exists but mtime unchanged - save may have failed')
+                        else:
+                            logger.error(f'File {tracked_cell_path} does not exist after save operation!')
+                    except Exception as e:
+                        logger.error(f'Failed to save tracked cells to {tracked_cell_path}: {e}')
+                        import traceback
+                        traceback.print_exc()
+                        raise
+            except Exception as e:
+                logger.error(f'Error processing frame {frame_idx}: {e}')
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        if not affected_frames:
+            logger.warning('No frames were successfully updated.')
+            return
+        
+        # Update database
+        logger.info(f'Updating database for {len(affected_frames)} affected frame(s)...')
+        # Collect all affected file paths
+        affected_file_paths = [file_list[frame_idx] for frame_idx in affected_frames if frame_idx < len(file_list)]
+        if affected_file_paths:
+            try:
+                add_localID_to_trackID_correspondance_in_DB(affected_file_paths)
+            except Exception as e:
+                logger.warning(f'Failed to update database for affected frames: {e}')
+        
+        # Clear correction state
+        paint_widget.track_correction_selected_cell_id = None
+        paint_widget.track_correction_marked_cells = {}
+        paint_widget.track_correction_circles = {}
+        
+        # Clear tracked image cache
+        paint_widget.tracked_image_int24 = None
+        paint_widget.tracked_image_rgb = None
+        paint_widget._tracked_image_qimage = None
+        paint_widget.current_file = None
+        
+        # Refresh preview
+        self._refresh_tracking_preview()
+        
+        logger.info(f'Track correction applied: {len(affected_frames)} frame(s) updated with new track ID {new_track_id:06x}')
+        if hasattr(paint_widget, 'statusBar') and paint_widget.statusBar:
+            paint_widget.statusBar.showMessage(f'Track correction applied: {len(affected_frames)} frame(s) updated.')
     
     def load_selected_cells_from_db(self):
         """Load selected cells from database for the current file."""
@@ -1049,7 +1364,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             if not current_file:
                 return
             
-            from tracking.tools import smart_name_parser
+            from tracking.utils.tools import smart_name_parser
             from database.sqlite_db import TAsql, ensure_selected_for_correction_column
             
             db_path = smart_name_parser(current_file, ordered_output='pyTA.db')
@@ -1171,7 +1486,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 logger.warning('No file selected, cannot update database')
                 return
             
-            from tracking.tools import smart_name_parser
+            from tracking.utils.tools import smart_name_parser
             from database.sqlite_db import TAsql, ensure_selected_for_correction_column
             
             db_path = smart_name_parser(current_file, ordered_output='pyTA.db')
@@ -1221,7 +1536,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             
             from utils.image_io import Img
             from utils.image_utils import RGB_to_int24
-            from tracking.tools import smart_name_parser
+            from tracking.utils.tools import smart_name_parser
             import numpy as np
             
             # OPTIMIZATION: Load each frame only once, then build presence matrix
@@ -1318,7 +1633,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             
             from utils.image_io import Img
             from utils.image_utils import RGB_to_int24
-            from tracking.tools import smart_name_parser
+            from tracking.utils.tools import smart_name_parser
             import numpy as np
             
             # Initialize or update cache
@@ -1483,7 +1798,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         """
         from utils.image_io import Img
         from utils.image_utils import RGB_to_int24
-        from tracking.tools import smart_name_parser
+        from tracking.utils.tools import smart_name_parser
         import numpy as np
         
         present_frames = []
@@ -1541,8 +1856,8 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             merge_start_frame: Frame index where merge should start (where second cell was clicked). Defaults to 0.
         """
         try:
-            from tracking.track_correction import connect_tracks
-            from tracking.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
+            from tracking.utils.track_correction import connect_tracks
+            from tracking.utils.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
             
             if not file_list:
                 logger.error('No file list provided for track merge')
@@ -1555,7 +1870,69 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             logger.info(f'Merging track {track_id_y:06x} into track {track_id_x:06x} starting from frame {merge_start_frame + 1}')
             
             # Connect tracks from merge_start_frame onwards
+            # #region agent log
+            import json
+            import time
+            import numpy as np
+            log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+            try:
+                # Check file before merge
+                from tracking.utils.tools import smart_name_parser
+                first_affected_file = file_list[merge_start_frame] if merge_start_frame < len(file_list) else None
+                tracked_path_before = None
+                file_mtime_before = None
+                unique_colors_before = None
+                if first_affected_file:
+                    tracked_path_before = smart_name_parser(first_affected_file, ordered_output='tracked_cells_resized.tif')
+                    if tracked_path_before and os.path.exists(tracked_path_before):
+                        file_mtime_before = os.path.getmtime(tracked_path_before)
+                        from utils.image_io import Img
+                        from utils.image_utils import RGB_to_int24
+                        img_before = Img(tracked_path_before)
+                        if isinstance(img_before, np.ndarray):
+                            if len(img_before.shape) == 3:
+                                int24_before = RGB_to_int24(img_before)
+                            else:
+                                int24_before = img_before.astype(np.uint32)
+                            unique_colors_before = [f"{c:06x}" for c in np.unique(int24_before)[:30]]
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_before_connect","timestamp":int(time.time()*1000),"location":"main_window.py:1624","message":"Before connect_tracks","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}","merge_start_frame":merge_start_frame,"tracked_path":tracked_path_before,"file_mtime":file_mtime_before,"unique_colors_sample":unique_colors_before},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except Exception as e:
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_merge_before_connect_error","timestamp":int(time.time()*1000),"location":"main_window.py:1624","message":"Error before connect_tracks","data":{"error":str(e)},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+                except: pass
+            # #endregion
             connect_tracks(file_list, merge_start_frame, track_id_x, track_id_y, __preview_only=False)
+            # #region agent log
+            try:
+                # Check file after merge
+                file_mtime_after = None
+                unique_colors_after = None
+                if tracked_path_before and os.path.exists(tracked_path_before):
+                    file_mtime_after = os.path.getmtime(tracked_path_before)
+                    from utils.image_io import Img
+                    from utils.image_utils import RGB_to_int24
+                    img_after = Img(tracked_path_before)
+                    if isinstance(img_after, np.ndarray):
+                        if len(img_after.shape) == 3:
+                            int24_after = RGB_to_int24(img_after)
+                        else:
+                            int24_after = img_after.astype(np.uint32)
+                        unique_colors_after = [f"{c:06x}" for c in np.unique(int24_after)[:30]]
+                        has_track_id_y = np.any(int24_after == track_id_y)
+                        has_track_id_x = np.any(int24_after == track_id_x)
+                else:
+                    has_track_id_y = None
+                    has_track_id_x = None
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_after_connect","timestamp":int(time.time()*1000),"location":"main_window.py:1624","message":"After connect_tracks","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}","file_mtime":file_mtime_after,"file_changed":file_mtime_before != file_mtime_after if file_mtime_before and file_mtime_after else None,"unique_colors_sample":unique_colors_after,"has_track_id_y":has_track_id_y,"has_track_id_x":has_track_id_x},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except Exception as e:
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_merge_after_connect_error","timestamp":int(time.time()*1000),"location":"main_window.py:1624","message":"Error after connect_tracks","data":{"error":str(e)},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+                except: pass
+            # #endregion
             
             # Update database to reflect the changes - only update affected frames from merge_start_frame onwards
             affected_frames = file_list[merge_start_frame:]
@@ -1574,8 +1951,44 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             # Recalculate only the merged track (track_id_x now includes track_id_y)
             self.calculate_track_completeness(file_list, track_id_x)
             
+            # Force reload tracked images to show updated colors
+            # Clear cached tracked image in paint widget to force reload
+            # #region agent log
+            import json
+            import time
+            log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_before_clear","timestamp":int(time.time()*1000),"location":"main_window.py:1643","message":"Before clearing cache","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}","has_paint":hasattr(self.paint, 'paint'),"current_file":self.paint.paint.current_file if hasattr(self.paint, 'paint') else None},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
+            if hasattr(self.paint, 'paint'):
+                # Invalidate the cached tracked image so it will be reloaded
+                self.paint.paint.tracked_image_int24 = None
+                self.paint.paint.tracked_image_rgb = None
+                self.paint.paint._tracked_image_qimage = None
+                self.paint.paint.current_file = None
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_after_clear","timestamp":int(time.time()*1000),"location":"main_window.py:1650","message":"After clearing cache","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}"},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
+            
             # Refresh preview to show updated tracks
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_before_refresh","timestamp":int(time.time()*1000),"location":"main_window.py:1653","message":"Before refresh preview","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}"},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
             self._refresh_tracking_preview()
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_merge_after_refresh","timestamp":int(time.time()*1000),"location":"main_window.py:1653","message":"After refresh preview","data":{"track_id_x":f"{track_id_x:06x}","track_id_y":f"{track_id_y:06x}"},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
             
             logger.info(f'Track {track_id_y:06x} successfully merged into track {track_id_x:06x}')
             
@@ -1622,10 +2035,20 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
         self.cellpose_batch_size_spin.setValue(4)
         self.cellpose_additional_settings_group.setChecked(True)
 
+    def reset_fill_holes_defaults(self):
+        """Reset fill holes parameters to their default values."""
+        self.cellpose_max_hole_size_spin.setValue(500)
+
     def reset_tracking_defaults(self):
-        """Reset all tracking parameters to their default values."""
-        self.pyramidal_depth_spinbox.setValue(3)
-        self.max_iter_spinbox.setValue(15)
+        """Reset all tracking parameters to default values."""
+        if hasattr(self, 'pyramidal_depth_spinbox'):
+            self.pyramidal_depth_spinbox.setValue(3)
+        if hasattr(self, 'threshold_translation_spinbox'):
+            self.threshold_translation_spinbox.setValue(20)
+        if hasattr(self, 'max_iter_spinbox'):
+            self.max_iter_spinbox.setValue(15)
+        if hasattr(self, 'tracking_method_combo'):
+            self.tracking_method_combo.setCurrentIndex(0)  # Reset to "Pyramidal"
 
     def cellpose_seg(self):
         """Launch Cellpose segmentation in a thread."""
@@ -1699,8 +2122,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
             _call_progress_callback
         )
         from utils.image_io import Img
-        from tracking.tools import smart_name_parser
-        import os
+        from tracking.utils.tools import smart_name_parser
         
         # Get selected images
         selected_images = self.get_selection_multiple()
@@ -1727,11 +2149,11 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 
                 logger.info(f'Processing image {idx + 1}/{total_images}: {os.path.basename(image_path)}')
                 
-                # Find the outlines.tif file for this image
+                # Find the handCorrection.tif file for this image
                 outlines_path = get_output_path(image_path)
                 
                 if not os.path.exists(outlines_path):
-                    logger.warning(f'No outlines.tif found for {image_path} at {outlines_path}, skipping')
+                    logger.warning(f'No handCorrection.tif found for {image_path} at {outlines_path}, skipping')
                     error_count += 1
                     continue
                 
@@ -1749,7 +2171,9 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 
                 # Get maximum hole size from UI (0 means fill all holes)
                 max_hole_size_value = self.cellpose_max_hole_size_spin.value()
-                max_region_size = max_hole_size_value if max_hole_size_value > 0 else None
+                # For _seg.npy method: use a very large number if 0 (fill all), otherwise use the value
+                max_region_size = 10000000 if max_hole_size_value == 0 else max_hole_size_value
+                # For outline-based method: None means fill all, otherwise use the value
                 max_hole_size = None if max_hole_size_value == 0 else max_hole_size_value
                 
                 # Try to use _seg.npy file if available (more accurate)
@@ -1757,15 +2181,14 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                 seg_npy_path = get_seg_npy_path(image_path)
                 
                 if seg_npy_path and os.path.exists(seg_npy_path):
-                    logger.info(f'Using _seg.npy file for hole filling: {seg_npy_path}')
-                    # For _seg.npy method, use max_region_size (None means fill all)
-                    filled_outlines = fill_holes_using_seg_npy(seg_npy_path, max_region_size=max_region_size if max_region_size is not None else 1000000)
+                    logger.info(f'Using _seg.npy file for hole filling: {seg_npy_path} (max_region_size={max_region_size if max_hole_size_value > 0 else "all"})')
+                    filled_outlines = fill_holes_using_seg_npy(seg_npy_path, max_region_size=max_region_size)
                     if filled_outlines is not None:
                         logger.info('Successfully filled holes using _seg.npy data')
                 
                 # Fall back to outline-based method if _seg.npy not available or failed
                 if filled_outlines is None:
-                    logger.info('Using outline-based hole filling method')
+                    logger.info(f'Using outline-based hole filling method (max_hole_size={"all" if max_hole_size is None else max_hole_size})')
                     filled_outlines = fill_holes_in_outline_mask(
                         outline_mask, 
                         max_hole_size=max_hole_size,  # None means fill all holes
@@ -1773,7 +2196,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                         extension_radius=1
                     )
                 
-                # Save the filled outlines back to outlines.tif
+                # Save the filled outlines back to handCorrection.tif
                 try:
                     Img(filled_outlines, dimensions='hw').save(outlines_path)
                     logger.info(f'Filled outlines saved to {outlines_path}')
@@ -2104,7 +2527,7 @@ class TissueAnalyzer(QtWidgets.QMainWindow):
                     ta_output_folder = parent_folder
                 else:
                     # Try using smart_name_parser as fallback
-                    from tracking.tools import smart_name_parser
+                    from tracking.utils.tools import smart_name_parser
                     ta_output_folder = smart_name_parser(current_file, ordered_output='TA')
                     # If smart_name_parser returns the file path, use its directory
                     if ta_output_folder == current_file or not os.path.isdir(ta_output_folder):

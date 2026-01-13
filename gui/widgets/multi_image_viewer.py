@@ -55,9 +55,9 @@ from gui.shapes.rect2d import Rect2D
 
 # TODO allow add labels on the sides --> like a table --> can be really useful!!!
 from gui.widgets.paint_widget import Createpaintwidget
-from tracking.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
-from tracking.tools import smart_name_parser
-from tracking.track_correction import swap_tracks, connect_tracks
+from tracking.utils.local_to_track_correspondance import add_localID_to_trackID_correspondance_in_DB
+from tracking.utils.tools import smart_name_parser
+from tracking.utils.track_correction import swap_tracks, connect_tracks
 from utils.logger import TA_logger # logging
 
 logger = TA_logger()

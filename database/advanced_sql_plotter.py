@@ -68,7 +68,7 @@ import os
 from database.sqlite_db import TAsql, createMasterDB, sort_col_numpy
 from utils.luts import PaletteCreator, apply_lut
 from measurements.nematic import Nematic
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 
 
 # matplotlib.use('Qt5Agg') #, Qt5Cairo,

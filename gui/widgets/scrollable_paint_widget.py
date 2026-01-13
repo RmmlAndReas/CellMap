@@ -111,12 +111,23 @@ class scrollable_paint(QWidget):
         self.increase_contrastC.setContext(QtCore.Qt.ApplicationShortcut)
 
         self.enterShortcut = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Return), self)
-        self.enterShortcut.activated.connect(self.paint.apply)
+        self.enterShortcut.activated.connect(self._handle_enter_key)
         self.enterShortcut.setContext(QtCore.Qt.ApplicationShortcut)
+        self.enterShortcut.setEnabled(True)  # Ensure shortcut is enabled
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_shortcut_created","timestamp":int(time.time()*1000),"location":"scrollable_paint_widget.py:113","message":"Enter shortcut created and connected","data":{"enabled":self.enterShortcut.isEnabled(),"context":int(self.enterShortcut.context())},"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}) + "\n")
+        except: pass
+        # #endregion
 
         self.enterShortcut2 = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Enter), self)
-        self.enterShortcut2.activated.connect(self.paint.apply)
+        self.enterShortcut2.activated.connect(self._handle_enter_key)
         self.enterShortcut2.setContext(QtCore.Qt.ApplicationShortcut)
+        self.enterShortcut2.setEnabled(True)  # Ensure shortcut is enabled
 
         self.shiftEnterShortcut = QtWidgets.QShortcut("Shift+Enter", self)
         self.shiftEnterShortcut.activated.connect(self.paint.shift_apply)
@@ -134,13 +145,45 @@ class scrollable_paint(QWidget):
         self.supr.activated.connect(self.paint.suppr_pressed)
         self.supr.setContext(QtCore.Qt.ApplicationShortcut)
 
+    def _handle_enter_key(self):
+        """Handle Enter key - check if track correction mode is active."""
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            track_correction_mode = getattr(self.paint, 'track_correction_mode', False)
+            has_main_window = hasattr(self.paint, 'main_window') and self.paint.main_window is not None
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_shortcut_enter","timestamp":int(time.time()*1000),"location":"scrollable_paint_widget.py:_handle_enter_key","message":"Enter shortcut activated - FUNCTION CALLED","data":{"track_correction_mode":track_correction_mode,"has_main_window":has_main_window,"paint_type":type(self.paint).__name__},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}) + "\n")
+        except Exception as e:
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_shortcut_enter_error","timestamp":int(time.time()*1000),"location":"scrollable_paint_widget.py:_handle_enter_key","message":"Error in _handle_enter_key","data":{"error":str(e)},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}) + "\n")
+            except: pass
+        # #endregion
+        
+        # Check if track correction mode is active
+        if hasattr(self.paint, 'track_correction_mode') and self.paint.track_correction_mode:
+            if hasattr(self.paint, 'main_window') and self.paint.main_window is not None:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_shortcut_calling_apply","timestamp":int(time.time()*1000),"location":"scrollable_paint_widget.py:_handle_enter_key","message":"Calling apply_track_correction from shortcut","data":{},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}) + "\n")
+                except: pass
+                # #endregion
+                self.paint.main_window.apply_track_correction()
+                return
+        # Otherwise, use the normal apply method
+        self.paint.apply()
+    
     def enable_shortcuts(self):
         self.disable_shortcuts()
         self.ctrlS.activated.connect(getattr(self.paint, "_safe_save", self.paint.save))
         self.ctrlM.activated.connect(self.paint.ctrl_m_apply)
         self.shrtM.activated.connect(self.paint.m_apply)
-        self.enterShortcut.activated.connect(self.paint.apply)
-        self.enterShortcut2.activated.connect(self.paint.apply)
+        self.enterShortcut.activated.connect(self._handle_enter_key)
+        self.enterShortcut2.activated.connect(self._handle_enter_key)
         self.shiftEnterShortcut.activated.connect(self.paint.shift_apply)
         self.shiftEnterShortcut2.activated.connect(self.paint.shift_apply)
 

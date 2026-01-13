@@ -5,7 +5,7 @@ from measurements.measurements3D.get_point_on_surface_if_centroid_is_bad import 
 from utils.TA_tools import get_TA_clone_file_name
 from utils.image_utils import RGB_to_int24
 from utils.image_io import Img
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 from skimage.measure import label, regionprops
 import numpy as np
 from utils.early_stopper import early_stop

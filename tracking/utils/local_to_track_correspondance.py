@@ -1,7 +1,7 @@
 from skimage.measure import regionprops, label
 import numpy as np
 from typing import Dict, Tuple, Optional
-from tracking.tools import smart_name_parser, get_mask_file
+from tracking.utils.tools import smart_name_parser, get_mask_file
 from utils.image_io import Img
 from utils.image_utils import RGB_to_int24
 from utils.early_stopper import early_stop

@@ -3,7 +3,7 @@
 import os
 import traceback
 from utils.image_io import Img
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 from utils.logger import TA_logger
 
 logger = TA_logger()
@@ -94,7 +94,7 @@ def _setup_segmentation_mode(main_window, selected_tab_name, selected_items, lis
         if hasattr(main_window.paint, 'paint'):
             main_window.paint.paint.selection_mode = False
             main_window.paint.paint.track_view_mode = False  # Disable track view mode to enable brush cursor
-            main_window.paint.paint.track_merge_mode = False  # Disable track merge mode
+            main_window.paint.paint.track_correction_mode = False  # Disable track correction mode
             # Clear any hover state
             main_window.paint.paint.hovered_track_id = None
             # Ensure brush tool (drawing) is enabled
@@ -165,10 +165,10 @@ def _load_mask(main_window, selected_file):
     """Load mask file if available."""
     main_window.paint.maskVisible = True
     main_window.paint.enableMouseTracking()
-    # Load outlines.tif (cellpose output)
+    # Load handCorrection.tif (cellpose output)
     TA_path_outlines = smart_name_parser(
         selected_file,
-        ordered_output='outlines.tif'
+        ordered_output='handCorrection.tif'
     )
     if TA_path_outlines and os.path.isfile(TA_path_outlines):
         main_window.paint.set_mask(TA_path_outlines)
@@ -239,20 +239,54 @@ def _load_tracked_cells_preview(main_window, selected_items):
     if os.path.isfile(tracked_cells_path):
         # Use the preview handler to load the image with proper masking
         from gui.handlers.preview_handler import create_preview_from_file
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            file_mtime = None
+            if os.path.exists(tracked_cells_path):
+                file_mtime = os.path.getmtime(tracked_cells_path)
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_tab_handler_before_preview","timestamp":int(time.time()*1000),"location":"tab_handler.py:242","message":"Before creating preview","data":{"tracked_cells_path":tracked_cells_path,"file_exists":os.path.exists(tracked_cells_path),"file_mtime":file_mtime},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}) + "\n")
+        except: pass
+        # #endregion
         preview_image = create_preview_from_file(main_window, 'tracked_cells_resized.tif', selected_file, TA_path)
+        # #region agent log
+        try:
+            file_mtime_after = None
+            if os.path.exists(tracked_cells_path):
+                file_mtime_after = os.path.getmtime(tracked_cells_path)
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_tab_handler_after_preview","timestamp":int(time.time()*1000),"location":"tab_handler.py:243","message":"After creating preview","data":{"preview_is_none":preview_image is None,"file_mtime":file_mtime_after},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}) + "\n")
+        except: pass
+        # #endregion
         if preview_image is not None:
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_tab_handler_set_image","timestamp":int(time.time()*1000),"location":"tab_handler.py:244","message":"Calling set_image with preview","data":{},"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}) + "\n")
+            except: pass
+            # #endregion
             main_window.paint.set_image(preview_image)
             # Also load tracked image for click detection
             if hasattr(main_window.paint, 'paint'):
                 main_window.paint.paint.load_tracked_image(selected_file)
                 # Enable track_view_mode for hover and click functionality
-                # Enable if selection mode is not active, OR if completeness overlay is enabled
+                # Enable if selection mode is not active, OR if completeness overlay is enabled, OR if track merge mode is active
                 overlay_enabled = (hasattr(main_window, 'track_completeness_overlay_enabled') and 
                                   main_window.track_completeness_overlay_enabled)
+                correction_mode_enabled = (hasattr(main_window, 'track_correction_mode_active') and 
+                                         main_window.track_correction_mode_active)
                 if (not hasattr(main_window, 'selection_mode_active') or 
                     not main_window.selection_mode_active or 
-                    overlay_enabled):
+                    overlay_enabled or
+                    correction_mode_enabled):
                     main_window.paint.paint.track_view_mode = True
+                # Make cursor visible in track correction mode
+                if correction_mode_enabled:
+                    main_window.paint.paint.unsetCursor()
+                    main_window.paint.paint.force_cursor_to_be_visible(True)
         else:
             # Fallback: load directly
             from utils.image_io import Img
@@ -261,13 +295,20 @@ def _load_tracked_cells_preview(main_window, selected_items):
             if hasattr(main_window.paint, 'paint'):
                 main_window.paint.paint.load_tracked_image(selected_file)
                 # Enable track_view_mode for hover and click functionality
-                # Enable if selection mode is not active, OR if completeness overlay is enabled
+                # Enable if selection mode is not active, OR if completeness overlay is enabled, OR if track merge mode is active
                 overlay_enabled = (hasattr(main_window, 'track_completeness_overlay_enabled') and 
                                   main_window.track_completeness_overlay_enabled)
+                correction_mode_enabled = (hasattr(main_window, 'track_correction_mode_active') and 
+                                         main_window.track_correction_mode_active)
                 if (not hasattr(main_window, 'selection_mode_active') or 
                     not main_window.selection_mode_active or 
-                    overlay_enabled):
+                    overlay_enabled or
+                    correction_mode_enabled):
                     main_window.paint.paint.track_view_mode = True
+                # Make cursor visible in track correction mode
+                if correction_mode_enabled:
+                    main_window.paint.paint.unsetCursor()
+                    main_window.paint.paint.force_cursor_to_be_visible(True)
     else:
         # File doesn't exist yet, show nothing or the original image
         main_window.paint.set_image(selected_file)

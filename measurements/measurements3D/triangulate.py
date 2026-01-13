@@ -9,7 +9,7 @@ from utils.image_utils import RGB_to_int24
 
 from measurements.measurements3D.get_point_on_surface_if_centroid_is_bad import point_on_surface
 from measurements.measurements3D.measures3D import compute_3D_surfacearea
-from tracking.rapid_detection_of_vertices import detect_vertices_and_bonds, associate_vertices_to_cells
+from tracking.correction.rapid_detection_of_vertices import detect_vertices_and_bonds, associate_vertices_to_cells
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage.measure import regionprops

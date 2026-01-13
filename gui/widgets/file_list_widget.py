@@ -13,7 +13,7 @@ from utils.list_utils import loadlist, save_list_to_file
 import os
 import platform
 import subprocess
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 import qtawesome as qta
 from natsort import natsorted
 from utils.logger import TA_logger

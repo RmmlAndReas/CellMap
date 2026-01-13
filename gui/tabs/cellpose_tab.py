@@ -28,10 +28,14 @@ def create_cellpose_tab(parent):
     # Left column widgets
     left_column = QVBoxLayout()
     
+    # 1. Segmentation group box
+    cellpose_segmentation_group = QGroupBox("1. Segmentation")
+    segmentation_group_layout = QVBoxLayout()
+    
     # ROIs label (will be updated dynamically)
     cellpose_rois_label = QLabel("0 ROIs")
     cellpose_rois_label.setToolTip("Number of segmented regions of interest (ROIs). Each ROI corresponds to one detected cell.")
-    left_column.addWidget(cellpose_rois_label)
+    segmentation_group_layout.addWidget(cellpose_rois_label)
     
     # Button row with run button
     button_layout = QHBoxLayout()
@@ -40,38 +44,13 @@ def create_cellpose_tab(parent):
     pushButton0.setToolTip("Run CellPose segmentation. Detects and segments cells in the image.")
     button_layout.addWidget(pushButton0)
     
-    # Defaults button
+    # Defaults button for segmentation
     cellpose_defaults_button = QPushButton("default parameters")
     cellpose_defaults_button.clicked.connect(parent.reset_cellpose_defaults)
     cellpose_defaults_button.setToolTip("Reset all Cellpose parameters to default values")
     button_layout.addWidget(cellpose_defaults_button)
     
-    left_column.addLayout(button_layout)
-    
-    # Hole filling group box
-    cellpose_hole_filling_group = QGroupBox("Fill Holes")
-    hole_filling_group_layout = QVBoxLayout()
-    
-    # Maximum size parameter
-    max_size_layout = QHBoxLayout()
-    max_size_layout.addWidget(QLabel("Maximum size:"))
-    cellpose_max_hole_size_spin = QSpinBox()
-    cellpose_max_hole_size_spin.setMinimum(0)
-    cellpose_max_hole_size_spin.setMaximum(10000)
-    cellpose_max_hole_size_spin.setValue(500)
-    cellpose_max_hole_size_spin.setSpecialValueText("All")
-    cellpose_max_hole_size_spin.setToolTip("Maximum size (in pixels) of holes/gaps to fill. Set to 0 to fill all holes regardless of size.")
-    max_size_layout.addWidget(cellpose_max_hole_size_spin)
-    hole_filling_group_layout.addLayout(max_size_layout)
-    
-    # Fill Holes button
-    cellpose_fill_holes_button = QPushButton("Fill Holes")
-    cellpose_fill_holes_button.clicked.connect(parent.cellpose_fill_holes)
-    cellpose_fill_holes_button.setToolTip("Fill holes in CellPose segmentation results. Processes selected images and fills gaps between cells.")
-    hole_filling_group_layout.addWidget(cellpose_fill_holes_button)
-    
-    cellpose_hole_filling_group.setLayout(hole_filling_group_layout)
-    left_column.addWidget(cellpose_hole_filling_group)
+    segmentation_group_layout.addLayout(button_layout)
     
     # Additional settings group (always active) - two columns
     cellpose_additional_settings_group = QGroupBox("parameters")
@@ -188,7 +167,41 @@ def create_cellpose_tab(parent):
     additional_settings_layout.addLayout(right_settings_column)
     
     cellpose_additional_settings_group.setLayout(additional_settings_layout)
-    left_column.addWidget(cellpose_additional_settings_group)
+    segmentation_group_layout.addWidget(cellpose_additional_settings_group)
+    
+    cellpose_segmentation_group.setLayout(segmentation_group_layout)
+    left_column.addWidget(cellpose_segmentation_group)
+    
+    # 2. Fill holes group box
+    cellpose_hole_filling_group = QGroupBox("2. Fill holes")
+    hole_filling_group_layout = QVBoxLayout()
+    
+    # Maximum size parameter
+    max_size_layout = QHBoxLayout()
+    max_size_layout.addWidget(QLabel("Maximum size:"))
+    cellpose_max_hole_size_spin = QSpinBox()
+    cellpose_max_hole_size_spin.setMinimum(0)
+    cellpose_max_hole_size_spin.setMaximum(10000)
+    cellpose_max_hole_size_spin.setValue(500)
+    cellpose_max_hole_size_spin.setSpecialValueText("All")
+    cellpose_max_hole_size_spin.setToolTip("Maximum size (in pixels) of holes/gaps to fill. Set to 0 to fill all holes regardless of size.")
+    max_size_layout.addWidget(cellpose_max_hole_size_spin)
+    hole_filling_group_layout.addLayout(max_size_layout)
+    
+    # Fill Holes button
+    cellpose_fill_holes_button = QPushButton("Fill Holes")
+    cellpose_fill_holes_button.clicked.connect(parent.cellpose_fill_holes)
+    cellpose_fill_holes_button.setToolTip("Fill holes in CellPose segmentation results. Processes selected images and fills gaps between cells.")
+    hole_filling_group_layout.addWidget(cellpose_fill_holes_button)
+    
+    # Defaults button for fill holes
+    fill_holes_defaults_button = QPushButton("default parameters")
+    fill_holes_defaults_button.clicked.connect(parent.reset_fill_holes_defaults)
+    fill_holes_defaults_button.setToolTip("Reset fill holes parameters to default values")
+    hole_filling_group_layout.addWidget(fill_holes_defaults_button)
+    
+    cellpose_hole_filling_group.setLayout(hole_filling_group_layout)
+    left_column.addWidget(cellpose_hole_filling_group)
     
     left_column.addStretch()
     
@@ -207,7 +220,9 @@ def create_cellpose_tab(parent):
     parent.pushButton0 = pushButton0
     parent.cellpose_defaults_button = cellpose_defaults_button
     parent.cellpose_fill_holes_button = cellpose_fill_holes_button
+    parent.fill_holes_defaults_button = fill_holes_defaults_button
     parent.cellpose_hole_filling_group = cellpose_hole_filling_group
+    parent.cellpose_segmentation_group = cellpose_segmentation_group
     parent.cellpose_max_hole_size_spin = cellpose_max_hole_size_spin
     parent.cellpose_additional_settings_group = cellpose_additional_settings_group
     parent.cellpose_diameter_spin = cellpose_diameter_spin

@@ -11,6 +11,7 @@ import traceback
 from qtpy.QtGui import QKeySequence
 from skimage.measure import label
 from skimage.segmentation import find_boundaries
+from skimage.morphology import skeletonize
 from gui.utils.watershed_utils import apply_watershed, manually_reseeded_wshed
 from gui.utils.membrane_editing_utils import extract_line_segment_between_points
 from qtpy.QtCore import QRect, QTimer, Qt
@@ -23,7 +24,7 @@ from utils.image_utils import toQimage, get_white_bounds, RGB_to_int24, is_binar
 from measurements.measurements3D.get_point_on_surface_if_centroid_is_bad import point_on_surface
 # Replaced custom wshed with scikit-image watershed
 from selections.selection import get_colors_drawn_over, convert_selection_color_to_coords
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser, get_mask_file
 import numpy as np
 from utils.logger import TA_logger # logging
 
@@ -69,9 +70,11 @@ class Createpaintwidget(QWidget):
         # Cell selection mode state
         self.selection_mode = False
         self.track_view_mode = False  # Mode for viewing track completeness and clicking to fix
-        self.track_merge_mode = False  # Mode for merging tracks - click first cell, then second cell
-        self.track_merge_source_track_id = None  # First selected track ID for merging
-        self.track_merge_source_frame_idx = None  # Frame index of first selection
+        self.track_correction_mode = False  # Mode for correcting tracks - click cells across frames, then apply
+        self.track_correction_selected_cell_id = None  # Currently highlighted cell ID (first clicked)
+        self.track_correction_marked_cells = {}  # {frame_idx: [(x, y, track_id), ...]} - cells marked for correction
+        self.track_correction_circles = {}  # {frame_idx: [(x, y), ...]} - circle positions for visual markers
+        self.track_correction_circle_size = 3  # Circle radius in pixels (adjustable)
         self.box_selection_start = None
         self.box_selection_end = None
         self.hovered_track_id = None
@@ -87,9 +90,34 @@ class Createpaintwidget(QWidget):
 
         # Enable keyboard focus to receive key events
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        
+        # Install event filter to catch Enter keys at a lower level
+        self.installEventFilter(self)
 
         if enable_shortcuts:
             self.add_shortcuts()
+    
+    def eventFilter(self, obj, event):
+        """Event filter to catch S keys in track correction mode before they're processed."""
+        if obj == self and event.type() == QtCore.QEvent.KeyPress:
+            if self.track_correction_mode:
+                key = event.key()
+                modifiers = event.modifiers()
+                # Check for S key without modifiers (Ctrl+S is for save)
+                if key == QtCore.Qt.Key_S and modifiers == QtCore.Qt.NoModifier:
+                    # #region agent log
+                    import json
+                    import time
+                    log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps({"id":"log_eventfilter_s","timestamp":int(time.time()*1000),"location":"paint_widget.py:eventFilter","message":"Event filter caught S key","data":{"key_code":key,"has_main_window":self.main_window is not None},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+                    except: pass
+                    # #endregion
+                    if self.main_window is not None:
+                        self.main_window.apply_track_correction()
+                        return True  # Event handled
+        return super().eventFilter(obj, event)
 
     def force_cursor_to_be_visible(self, boolean):
         self.force_cursor_visible = boolean
@@ -162,13 +190,40 @@ class Createpaintwidget(QWidget):
             return color
         return None
 
+    def _handle_enter_key_paint_widget(self):
+        """Handle Enter key in paint widget - check track correction mode first."""
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            track_correction_mode = getattr(self, 'track_correction_mode', False)
+            has_main_window = hasattr(self, 'main_window') and self.main_window is not None
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_paint_enter_handler","timestamp":int(time.time()*1000),"location":"paint_widget.py:_handle_enter_key_paint_widget","message":"Paint widget Enter handler called","data":{"track_correction_mode":track_correction_mode,"has_main_window":has_main_window},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}) + "\n")
+        except: pass
+        # #endregion
+        
+        if hasattr(self, 'track_correction_mode') and self.track_correction_mode:
+            if hasattr(self, 'main_window') and self.main_window is not None:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_paint_enter_calling_apply","timestamp":int(time.time()*1000),"location":"paint_widget.py:_handle_enter_key_paint_widget","message":"Calling apply_track_correction from paint widget","data":{},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}) + "\n")
+                except: pass
+                # #endregion
+                self.main_window.apply_track_correction()
+                return
+        # Otherwise, use the normal apply method
+        self.apply()
+    
     def add_shortcuts(self):
         padEnterShortcut = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Enter), self)
-        padEnterShortcut.activated.connect(self.apply)
+        padEnterShortcut.activated.connect(self._handle_enter_key_paint_widget)
         padEnterShortcut.setContext(QtCore.Qt.ApplicationShortcut)
 
         enterShortcut = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Return), self)
-        enterShortcut.activated.connect(self.apply)
+        enterShortcut.activated.connect(self._handle_enter_key_paint_widget)
         enterShortcut.setContext(QtCore.Qt.ApplicationShortcut)
 
         enterShortcut2 = QtWidgets.QShortcut('Shift+Return', self)
@@ -294,6 +349,31 @@ class Createpaintwidget(QWidget):
         self.update()
 
     def set_image(self, img):
+        # #region agent log
+        import json
+        import time
+        import numpy as np
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            img_info = None
+            if isinstance(img, np.ndarray):
+                unique_colors = None
+                if img.size > 0:
+                    if len(img.shape) == 3:
+                        from utils.image_utils import RGB_to_int24
+                        int24_temp = RGB_to_int24(img)
+                        unique_colors = [f"{c:06x}" for c in np.unique(int24_temp)[:20]]
+                    else:
+                        unique_colors = [f"{c:06x}" for c in np.unique(img)[:20]]
+                img_info = {"type":"ndarray","shape":list(img.shape),"unique_colors_sample":unique_colors}
+            elif isinstance(img, str):
+                img_info = {"type":"str","path":img}
+            else:
+                img_info = {"type":str(type(img))}
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_set_image_entry","timestamp":int(time.time()*1000),"location":"paint_widget.py:296","message":"set_image entry","data":img_info,"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}) + "\n")
+        except: pass
+        # #endregion
         if img is None:
             self.save_file_name = None
             self.raw_image = None
@@ -314,6 +394,20 @@ class Createpaintwidget(QWidget):
 
         if isinstance(img, np.ndarray):
             self.raw_image = img
+            # #region agent log
+            try:
+                unique_colors_raw = None
+                if img.size > 0:
+                    if len(img.shape) == 3:
+                        from utils.image_utils import RGB_to_int24
+                        int24_temp = RGB_to_int24(img)
+                        unique_colors_raw = [f"{c:06x}" for c in np.unique(int24_temp)[:20]]
+                    else:
+                        unique_colors_raw = [f"{c:06x}" for c in np.unique(img)[:20]]
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_set_image_raw","timestamp":int(time.time()*1000),"location":"paint_widget.py:317","message":"set_image raw_image set","data":{"shape":list(img.shape),"unique_colors_sample":unique_colors_raw},"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}) + "\n")
+            except: pass
+            # #endregion
             self.image = toQimage(img)
             if self.image is None:
                 logger.error('Image could not be displayed...')
@@ -749,6 +843,29 @@ class Createpaintwidget(QWidget):
 
     def keyPressEvent(self, event):
         """Handle keyboard events, especially Ctrl+S for saving and Ctrl+Z for undo."""
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+        try:
+            key_code = event.key()
+            key_name = None
+            is_return = (key_code == QtCore.Qt.Key_Return)
+            is_enter = (key_code == QtCore.Qt.Key_Enter)
+            if is_return:
+                key_name = "Key_Return"
+            elif is_enter:
+                key_name = "Key_Enter"
+            modifiers_value = int(event.modifiers()) if hasattr(event.modifiers(), '__int__') else str(event.modifiers())
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"id":"log_keypress_entry","timestamp":int(time.time()*1000),"location":"paint_widget.py:790","message":"keyPressEvent called","data":{"key_code":key_code,"key_name":key_name,"is_return":is_return,"is_enter":is_enter,"track_correction_mode":self.track_correction_mode,"has_focus":self.hasFocus(),"modifiers":modifiers_value,"Key_Return_value":int(QtCore.Qt.Key_Return),"Key_Enter_value":int(QtCore.Qt.Key_Enter)},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+        except Exception as e:
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_keypress_entry_error","timestamp":int(time.time()*1000),"location":"paint_widget.py:790","message":"Error in keyPressEvent logging","data":{"error":str(e)},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+        # #endregion
+        
         if event.key() == QtCore.Qt.Key_S and event.modifiers() == QtCore.Qt.ControlModifier:
             event.accept()  # Accept the event to prevent default behavior
             self._safe_save()
@@ -757,7 +874,55 @@ class Createpaintwidget(QWidget):
             event.accept()  # Accept the event to prevent default behavior
             self.undo()
             return  # Don't call super() to prevent default behavior
+        elif self.track_correction_mode and event.key() == QtCore.Qt.Key_S and event.modifiers() == QtCore.Qt.NoModifier:
+            # S key in track correction mode (without Ctrl) - apply correction
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_keypress_s_matched","timestamp":int(time.time()*1000),"location":"paint_widget.py:848","message":"S key matched in track correction mode","data":{"key_code":event.key(),"has_main_window":self.main_window is not None},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
+            event.accept()
+            if self.main_window is not None:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_keypress_calling_apply_s","timestamp":int(time.time()*1000),"location":"paint_widget.py:853","message":"Calling apply_track_correction from keyPressEvent (S key)","data":{},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+                except: pass
+                # #endregion
+                self.main_window.apply_track_correction()
+            return
+        elif self.track_correction_mode and (event.key() == QtCore.Qt.Key_Return or event.key() == QtCore.Qt.Key_Enter):
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_keypress_checking_enter","timestamp":int(time.time()*1000),"location":"paint_widget.py:817","message":"Checking Enter key condition","data":{"key_code":event.key(),"Key_Return":int(QtCore.Qt.Key_Return),"Key_Enter":int(QtCore.Qt.Key_Enter),"matches_return":event.key() == QtCore.Qt.Key_Return,"matches_enter":event.key() == QtCore.Qt.Key_Enter},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_keypress_enter_matched","timestamp":int(time.time()*1000),"location":"paint_widget.py:817","message":"Enter key matched in track correction mode","data":{"key_code":event.key(),"has_main_window":self.main_window is not None},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
+            # Enter key in track correction mode - apply correction
+            event.accept()
+            if self.main_window is not None:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_keypress_calling_apply","timestamp":int(time.time()*1000),"location":"paint_widget.py:833","message":"Calling apply_track_correction from keyPressEvent","data":{},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+                except: pass
+                # #endregion
+                self.main_window.apply_track_correction()
+            return
         else:
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_keypress_no_match","timestamp":int(time.time()*1000),"location":"paint_widget.py:806","message":"Key did not match any handler, calling super","data":{"key_code":key_code,"track_correction_mode":self.track_correction_mode},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}) + "\n")
+            except: pass
+            # #endregion
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -785,56 +950,85 @@ class Createpaintwidget(QWidget):
                     # Toggle selection - need to access main window's selected_track_ids
                     # This will be handled in mouseReleaseEvent to avoid issues
                     pass
-        elif self.track_merge_mode and event.buttons() == QtCore.Qt.LeftButton:
-            # Handle track merge mode - first click selects source track, second click selects target and shows merge dialog
+        elif self.track_correction_mode and event.buttons() == QtCore.Qt.LeftButton:
+            # Handle track correction mode - click cells across frames to mark them for correction
+            if self.main_window is None:
+                return
+            
+            # Ensure tracked image is loaded
+            if self.tracked_image_int24 is None:
+                current_file = self.main_window.get_selection()
+                if current_file:
+                    if not self.load_tracked_image(current_file):
+                        if self.statusBar:
+                            self.statusBar.showMessage('Track correction mode: Tracked cells image not found. Please track cells first.')
+                        logger.warning('Track correction mode: Tracked cells image not found.')
+                        return
+                else:
+                    if self.statusBar:
+                        self.statusBar.showMessage('Track correction mode: No file selected.')
+                    return
+            
             widget_pos = event.position()
             clicked_track_id = self.get_track_id_at_position(widget_pos.x(), widget_pos.y())
             
-            if clicked_track_id is not None and self.main_window is not None:
-                file_list = self.main_window.get_full_list(warn_on_empty_list=False) or []
-                current_frame_idx = self.main_window.get_selection_index()
+            if clicked_track_id is None:
+                # Clicked on background - provide feedback
+                if self.statusBar:
+                    self.statusBar.showMessage('Track correction mode: Click on a cell to mark it.')
+                return
+            
+            # Get current frame index
+            current_frame_idx = self.main_window.get_selection_index()
+            if current_frame_idx is None:
+                current_frame_idx = 0
+            
+            # Convert widget position to image coordinates for circle storage
+            img_x = int(widget_pos.x() / self.scale)
+            img_y = int(widget_pos.y() / self.scale)
+            
+            # Initialize frame data structures if needed
+            if current_frame_idx not in self.track_correction_marked_cells:
+                self.track_correction_marked_cells[current_frame_idx] = []
+            if current_frame_idx not in self.track_correction_circles:
+                self.track_correction_circles[current_frame_idx] = []
+            
+            # First click: set selected cell and highlight it
+            if self.track_correction_selected_cell_id is None:
+                self.track_correction_selected_cell_id = clicked_track_id
+                logger.info(f'Track correction mode: Selected cell {clicked_track_id:06x} at frame {current_frame_idx + 1}')
                 
-                if self.track_merge_source_track_id is None:
-                    # First click - store source track
-                    self.track_merge_source_track_id = clicked_track_id
-                    self.track_merge_source_frame_idx = current_frame_idx
-                    logger.info(f'Track merge mode: Selected source track {clicked_track_id:06x} at frame {current_frame_idx + 1}')
-                    if self.statusBar:
-                        self.statusBar.showMessage(f'Track merge: Source track {clicked_track_id:06x} selected. Click target track to merge.')
-                elif clicked_track_id != self.track_merge_source_track_id:
-                    # Second click on different track - show merge dialog
-                    from gui.dialogs.track_merge_dialog import show_track_merge_dialog
-                    merge_confirmed = show_track_merge_dialog(
-                        self.main_window,
-                        self.track_merge_source_track_id,
-                        clicked_track_id
-                    )
+                # Mark this cell
+                self.track_correction_marked_cells[current_frame_idx].append((img_x, img_y, clicked_track_id))
+                self.track_correction_circles[current_frame_idx].append((img_x, img_y))
+                
+                if self.statusBar:
+                    self.statusBar.showMessage(f'Track correction: Cell {clicked_track_id:06x} selected. Navigate frames and click cells to mark them. Press Enter when done.')
+            else:
+                # Subsequent clicks: add circle marker (brush mode)
+                # Check if this cell is already marked in this frame
+                already_marked = any(
+                    abs(x - img_x) < 5 and abs(y - img_y) < 5 
+                    for x, y, _ in self.track_correction_marked_cells[current_frame_idx]
+                )
+                
+                if not already_marked:
+                    self.track_correction_marked_cells[current_frame_idx].append((img_x, img_y, clicked_track_id))
+                    self.track_correction_circles[current_frame_idx].append((img_x, img_y))
+                    logger.info(f'Track correction mode: Marked cell {clicked_track_id:06x} at ({img_x}, {img_y}) in frame {current_frame_idx + 1}')
                     
-                    if merge_confirmed:
-                        # Merge tracks: track_id_x (source) is kept, track_id_y (clicked) is merged into it
-                        # Start merge from the frame where the second cell was clicked
-                        self.main_window.merge_tracks(
-                            self.track_merge_source_track_id,
-                            clicked_track_id,
-                            file_list,
-                            merge_start_frame=current_frame_idx
-                        )
-                    
-                    # Clear merge mode state
-                    self.track_merge_source_track_id = None
-                    self.track_merge_source_frame_idx = None
                     if self.statusBar:
-                        self.statusBar.showMessage('Track merge mode: Ready. Click first cell, then second cell.')
-                else:
-                    # Clicked same track - clear selection
-                    self.track_merge_source_track_id = None
-                    self.track_merge_source_frame_idx = None
-                    if self.statusBar:
-                        self.statusBar.showMessage('Track merge mode: Selection cleared. Click first cell, then second cell.')
+                        marked_count = sum(len(cells) for cells in self.track_correction_marked_cells.values())
+                        self.statusBar.showMessage(f'Track correction: {marked_count} cell(s) marked. Press Enter when done.')
+            
+            self.update()  # Trigger repaint to show circle
+            # Ensure widget maintains focus to receive keyboard events
+            if not self.hasFocus():
+                self.setFocus()
         # Handle track highlighting in tracking tab - simple toggle on click
         elif (event.buttons() == QtCore.Qt.LeftButton and 
               not self.selection_mode and 
-              not self.track_merge_mode and
+              not self.track_correction_mode and
               self.tracked_image_int24 is not None and
               self.main_window is not None):
             # Check if we're in tracking tab
@@ -928,12 +1122,15 @@ class Createpaintwidget(QWidget):
             if track_id != self.hovered_track_id:
                 self.hovered_track_id = track_id
                 self.update()
-        elif self.track_merge_mode:
-            # Update hovered cell in track merge mode for better UX
+        elif self.track_correction_mode:
+            # Update hovered cell in track correction mode for better UX
             track_id = self.get_track_id_at_position(widget_pos.x(), widget_pos.y())
             if track_id != self.hovered_track_id:
                 self.hovered_track_id = track_id
                 self.update()
+            # Ensure widget has focus to receive keyboard events
+            if not self.hasFocus():
+                self.setFocus()
         else:
             self.drawOnImage(event)
 
@@ -1029,7 +1226,7 @@ class Createpaintwidget(QWidget):
         
         # Trigger repaint to show updated selection
         self.update()
-
+    
     def propagate_mouse_event(self, event):
         print(self,event)
         pass
@@ -1122,10 +1319,31 @@ class Createpaintwidget(QWidget):
             bool: True if tracked image was loaded successfully, False otherwise
         """
         try:
+            # #region agent log
+            import json
+            import time
+            log_path = r"c:\Users\andre\OneDrive\Documents\Lemkes\006_Side\pyTissueAnalyzer\pyTissueAnalyzer\.cursor\debug.log"
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_load_tracked_entry","timestamp":int(time.time()*1000),"location":"paint_widget.py:1154","message":"load_tracked_image entry","data":{"file_path":file_path,"current_file":self.current_file,"has_tracked_int24":self.tracked_image_int24 is not None},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+            except: pass
+            # #endregion
             if file_path == self.current_file and self.tracked_image_int24 is not None:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"id":"log_load_tracked_early_return","timestamp":int(time.time()*1000),"location":"paint_widget.py:1166","message":"Early return - already loaded","data":{"file_path":file_path,"current_file":self.current_file},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+                except: pass
+                # #endregion
                 return True  # Already loaded
             
             tracked_image_path = smart_name_parser(file_path, ordered_output='tracked_cells_resized.tif')
+            # #region agent log
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_load_tracked_path","timestamp":int(time.time()*1000),"location":"paint_widget.py:1168","message":"Tracked image path resolved","data":{"tracked_image_path":tracked_image_path,"file_exists":os.path.exists(tracked_image_path) if tracked_image_path else False},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+            except: pass
+            # #endregion
             if not os.path.exists(tracked_image_path):
                 self.tracked_image_int24 = None
                 self.tracked_image_rgb = None
@@ -1134,6 +1352,21 @@ class Createpaintwidget(QWidget):
                 return False
             
             tracked_image_rgb = Img(tracked_image_path)
+            # #region agent log
+            try:
+                import numpy as np
+                unique_colors_before = None
+                if isinstance(tracked_image_rgb, np.ndarray) and tracked_image_rgb.size > 0:
+                    if len(tracked_image_rgb.shape) == 3:
+                        from utils.image_utils import RGB_to_int24
+                        int24_temp = RGB_to_int24(tracked_image_rgb)
+                        unique_colors_before = [f"{c:06x}" for c in np.unique(int24_temp)[:20]]
+                    else:
+                        unique_colors_before = [f"{c:06x}" for c in np.unique(tracked_image_rgb)[:20]]
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_load_tracked_loaded","timestamp":int(time.time()*1000),"location":"paint_widget.py:1176","message":"Tracked image loaded from file","data":{"shape":list(tracked_image_rgb.shape) if isinstance(tracked_image_rgb, np.ndarray) else None,"unique_colors_sample":unique_colors_before},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+            except: pass
+            # #endregion
             if len(tracked_image_rgb.shape) == 3 and tracked_image_rgb.shape[2] == 3:
                 self.tracked_image_rgb = tracked_image_rgb.copy()
                 self.tracked_image_int24 = RGB_to_int24(tracked_image_rgb)
@@ -1148,6 +1381,15 @@ class Createpaintwidget(QWidget):
             self._tracked_image_qimage = None
             
             self.current_file = file_path
+            # #region agent log
+            try:
+                unique_colors_after = None
+                if self.tracked_image_int24 is not None:
+                    unique_colors_after = [f"{c:06x}" for c in np.unique(self.tracked_image_int24)[:20]]
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"id":"log_load_tracked_complete","timestamp":int(time.time()*1000),"location":"paint_widget.py:1190","message":"load_tracked_image complete","data":{"current_file":self.current_file,"unique_colors_sample":unique_colors_after},"sessionId":"debug-session","runId":"run1","hypothesisId":"D"}) + "\n")
+            except: pass
+            # #endregion
             return True
         except Exception as e:
             logger.error(f'Error loading tracked image: {e}')
@@ -1269,23 +1511,71 @@ class Createpaintwidget(QWidget):
                 # canvasPainter.end()
                 return
 
+            # In track correction mode:
+            # - If no cell selected: show colored tracked cells image
+            # - If cell selected: show handCorrection.tif as background
+            if self.track_correction_mode:
+                if self.track_correction_selected_cell_id is None:
+                    # No cell selected yet - show colored tracked cells image
+                    if self.tracked_image_rgb is not None:
+                        # Convert tracked_image_rgb to QImage if not already cached
+                        if not hasattr(self, '_tracked_image_qimage') or self._tracked_image_qimage is None:
+                            self._tracked_image_qimage = toQimage(self.tracked_image_rgb)
+                        canvasPainter.drawImage(visibleRect, self._tracked_image_qimage, scaledVisibleRect)
+                    else:
+                        # Fallback to regular image
+                        canvasPainter.drawImage(visibleRect, self.image, scaledVisibleRect)
+                else:
+                    # Cell selected - show handCorrection.tif as background (clean, no additions)
+                    current_file = None
+                    if self.main_window is not None:
+                        current_file = self.main_window.get_selection()
+                    if current_file:
+                        try:
+                            filename_without_ext = smart_name_parser(current_file, ordered_output='full_no_ext')
+                            handcorrection_path = get_mask_file(filename_without_ext)
+                            if os.path.exists(handcorrection_path):
+                                handcorrection_img = Img(handcorrection_path)
+                                if handcorrection_img is not None:
+                                    # Convert grayscale to RGB if needed (handCorrection.tif is often grayscale)
+                                    handcorrection_array = np.asarray(handcorrection_img)
+                                    if len(handcorrection_array.shape) == 2:
+                                        # Grayscale - convert to RGB
+                                        handcorrection_rgb = np.stack([handcorrection_array, handcorrection_array, handcorrection_array], axis=-1)
+                                        handcorrection_qimage = toQimage(handcorrection_rgb)
+                                    else:
+                                        handcorrection_qimage = toQimage(handcorrection_img)
+                                    canvasPainter.drawImage(visibleRect, handcorrection_qimage, scaledVisibleRect)
+                                else:
+                                    canvasPainter.fillRect(visibleRect, QtGui.QColor(0, 0, 0))  # Black fallback
+                            else:
+                                canvasPainter.fillRect(visibleRect, QtGui.QColor(0, 0, 0))  # Black fallback
+                        except Exception as e:
+                            logger.warning(f'Error loading handCorrection.tif: {e}')
+                            canvasPainter.fillRect(visibleRect, QtGui.QColor(0, 0, 0))  # Black fallback
+                    else:
+                        canvasPainter.fillRect(visibleRect, QtGui.QColor(0, 0, 0))  # Black fallback
             # In selection mode, show colorcoded tracked image instead of regular image
             # BUT: if completeness overlay is enabled, use self.image (which has the overlay) instead
-            overlay_enabled = (self.main_window is not None and 
-                             hasattr(self.main_window, 'track_completeness_overlay_enabled') and 
-                             self.main_window.track_completeness_overlay_enabled)
-            if self.selection_mode and self.tracked_image_rgb is not None and not overlay_enabled:
-                # Convert tracked_image_rgb to QImage if not already cached
-                if not hasattr(self, '_tracked_image_qimage') or self._tracked_image_qimage is None:
-                    self._tracked_image_qimage = toQimage(self.tracked_image_rgb)
-                canvasPainter.drawImage(visibleRect, self._tracked_image_qimage, scaledVisibleRect)
-            else:
-                # Use self.image which has the completeness overlay applied (if enabled)
-                canvasPainter.drawImage(visibleRect, self.image, scaledVisibleRect)
+            # IMPORTANT: Only draw if NOT in track correction mode (to avoid covering handCorrection.tif)
+            elif not self.track_correction_mode:
+                overlay_enabled = (self.main_window is not None and 
+                                 hasattr(self.main_window, 'track_completeness_overlay_enabled') and 
+                                 self.main_window.track_completeness_overlay_enabled)
+                if self.selection_mode and self.tracked_image_rgb is not None and not overlay_enabled:
+                    # Convert tracked_image_rgb to QImage if not already cached
+                    if not hasattr(self, '_tracked_image_qimage') or self._tracked_image_qimage is None:
+                        self._tracked_image_qimage = toQimage(self.tracked_image_rgb)
+                    canvasPainter.drawImage(visibleRect, self._tracked_image_qimage, scaledVisibleRect)
+                else:
+                    # Use self.image which has the completeness overlay applied (if enabled)
+                    canvasPainter.drawImage(visibleRect, self.image, scaledVisibleRect)
             
-            if self.maskVisible and self.imageDraw is not None:
-                canvasPainter.drawImage(visibleRect, self.imageDraw, scaledVisibleRect)
-            canvasPainter.drawImage(visibleRect, self.cursor, scaledVisibleRect)
+            # Don't draw mask or cursor in track correction mode (keep it clean - black background only)
+            if not self.track_correction_mode:
+                if self.maskVisible and self.imageDraw is not None:
+                    canvasPainter.drawImage(visibleRect, self.imageDraw, scaledVisibleRect)
+                canvasPainter.drawImage(visibleRect, self.cursor, scaledVisibleRect)
             
             # Draw selection mode overlays
             if self.selection_mode and self.tracked_image_int24 is not None:
@@ -1296,11 +1586,17 @@ class Createpaintwidget(QWidget):
                 self._draw_hover_overlay(canvasPainter, visibleRect, scaledVisibleRect)
             
             # Draw track highlight overlay (works in both normal mode and when completeness overlay is active)
-            if (self.tracked_image_int24 is not None and 
+            # BUT: Skip in track correction mode to avoid covering handCorrection.tif
+            if (not self.track_correction_mode and
+                self.tracked_image_int24 is not None and 
                 self.main_window is not None and 
                 hasattr(self.main_window, 'highlighted_track_ids') and 
                 self.main_window.highlighted_track_ids):
                 self._draw_track_highlight_overlay(canvasPainter, visibleRect, scaledVisibleRect)
+            
+            # Draw track correction mode overlays (highlighting and circles)
+            if self.track_correction_mode and self.tracked_image_int24 is not None:
+                self._draw_track_correction_overlays(canvasPainter, visibleRect, scaledVisibleRect)
         except:
             traceback.print_exc()
         finally:
@@ -1505,7 +1801,180 @@ class Createpaintwidget(QWidget):
             logger.error(f'Error drawing track highlight overlay: {e}')
             traceback.print_exc()
     
-
+    def _draw_track_correction_overlays(self, painter, visibleRect, scaledVisibleRect):
+        """
+        Draw track correction mode overlays: highlight selected cell, show outlines for others, and draw circles.
+        
+        Args:
+            painter: QPainter object
+            visibleRect: Visible rectangle in widget coordinates
+            scaledVisibleRect: Visible rectangle in image coordinates
+        """
+        try:
+            if self.tracked_image_int24 is None:
+                return
+            
+            img_h, img_w = self.tracked_image_int24.shape[:2]
+            from qtpy.QtGui import QImage
+            
+            # Get current frame index
+            current_frame_idx = None
+            if self.main_window is not None:
+                current_frame_idx = self.main_window.get_selection_index()
+            if current_frame_idx is None:
+                current_frame_idx = 0
+            
+            # Draw selected track cells as gray (all cells belonging to the selected track)
+            # NOTE: This is drawn on top of handCorrection.tif - user may want to disable this
+            if self.track_correction_selected_cell_id is not None:
+                # Find all cells with the same track ID as the selected cell
+                selected_track_mask = (self.tracked_image_int24 == self.track_correction_selected_cell_id)
+                
+                if np.any(selected_track_mask):
+                    # Create gray overlay for selected track (gray cells)
+                    gray_value = 128  # Medium gray
+                    overlay = np.zeros((img_h, img_w, 3), dtype=np.uint8, order='C')
+                    overlay[selected_track_mask] = [gray_value, gray_value, gray_value]  # Gray color
+                    
+                    # Ensure array is contiguous for QImage
+                    overlay = np.ascontiguousarray(overlay)
+                    
+                    # Convert to QImage (RGB888 format: width, height, bytesPerLine)
+                    overlay_qimage = QImage(overlay.tobytes(), 
+                                          img_w, img_h,
+                                          img_w * 3,
+                                          QImage.Format_RGB888)
+                    
+                    # Draw gray overlay with some transparency
+                    painter.save()
+                    painter.setOpacity(0.7)  # Semi-transparent so background shows through
+                    painter.drawImage(visibleRect, overlay_qimage, scaledVisibleRect)
+                    painter.restore()
+                    
+                    # Highlight the selected cell more prominently (bright yellow highlight)
+                    # Get the clicked cell position from the current frame
+                    if current_frame_idx in self.track_correction_marked_cells:
+                        for img_x, img_y, marked_track_id in self.track_correction_marked_cells[current_frame_idx]:
+                            if marked_track_id == self.track_correction_selected_cell_id:
+                                # This is the selected cell - the area highlight is drawn separately after outlines
+                                break
+                    else:
+                        # Try to find the selected cell in the tracked image directly
+                        # Find the centroid of the selected track in current frame
+                        selected_cell_mask = (self.tracked_image_int24 == self.track_correction_selected_cell_id)
+                        if np.any(selected_cell_mask):
+                            from skimage.measure import regionprops
+                            labeled_mask = label(selected_cell_mask.astype(int), connectivity=1)
+                            props = regionprops(selected_cell_mask.astype(int))
+                            if props:
+                                # Get centroid of the selected cell
+                                centroid = props[0].centroid
+                                img_y, img_x = int(centroid[0]), int(centroid[1])
+                                painter.save()
+                                # Draw a very visible highlight - bright yellow with thick border
+                                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 0), 8))  # Bright yellow, very thick
+                                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0, 200)))  # More opaque yellow fill
+                                painter.setRenderHint(QtGui.QPainter.Antialiasing, True)  # Smooth edges
+                                
+                                # Convert image coordinates to widget coordinates
+                                scale_x = visibleRect.width() / scaledVisibleRect.width() if scaledVisibleRect.width() > 0 else 1.0
+                                scale_y = visibleRect.height() / scaledVisibleRect.height() if scaledVisibleRect.height() > 0 else 1.0
+                                widget_x = visibleRect.x() + (img_x - scaledVisibleRect.x()) * scale_x
+                                widget_y = visibleRect.y() + (img_y - scaledVisibleRect.y()) * scale_y
+                                
+                                # Draw a larger circle to highlight the selected cell
+                                highlight_radius = self.track_correction_circle_size * 2.0 * scale_x  # Make it even larger
+                                painter.drawEllipse(int(widget_x - highlight_radius), int(widget_y - highlight_radius), 
+                                                   int(highlight_radius * 2), int(highlight_radius * 2))
+                                painter.restore()
+            
+            # Draw white outlines for all cells (only when a cell is selected)
+            if self.track_correction_selected_cell_id is not None:
+                # Create outline mask for all cells
+                all_cells_mask = (self.tracked_image_int24 != 0xFFFFFF) & (self.tracked_image_int24 != 0)
+                
+                # Use find_boundaries to get outlines
+                if np.any(all_cells_mask):
+                    # Create a labeled mask for all cells
+                    labeled = label(all_cells_mask, connectivity=1)
+                    
+                    # Find boundaries between regions
+                    outline = find_boundaries(labeled, mode='inner', connectivity=1)
+                    
+                    # Skeletonize to make outlines thinner (1-pixel width)
+                    outline_binary = outline.astype(bool)
+                    outline_skeleton = skeletonize(outline_binary)
+                    
+                    # Convert skeletonized outline to QImage (white)
+                    outline_data = outline_skeleton.astype(np.uint8) * 255
+                    bytesPerLine = img_w
+                    outline_img = QImage(outline_data.tobytes(), 
+                                        img_w, img_h,
+                                        bytesPerLine,
+                                        QImage.Format_Grayscale8)
+                    
+                    # Draw white outline
+                    painter.save()
+                    painter.setOpacity(1.0)  # Full opacity for white outlines
+                    painter.drawImage(visibleRect, outline_img, scaledVisibleRect)
+                    painter.restore()
+            
+            # Draw selected cell area highlight (AFTER outlines so it's on top)
+            if self.track_correction_selected_cell_id is not None:
+                # Find the selected cell mask and highlight the entire cell area
+                selected_cell_mask = (self.tracked_image_int24 == self.track_correction_selected_cell_id)
+                if np.any(selected_cell_mask):
+                    # Create yellow overlay for the selected cell area
+                    highlight_overlay = np.zeros((img_h, img_w, 3), dtype=np.uint8, order='C')
+                    highlight_overlay[selected_cell_mask] = [255, 255, 0]  # Bright yellow
+                    highlight_overlay = np.ascontiguousarray(highlight_overlay)
+                    
+                    # Convert to QImage
+                    highlight_qimage = QImage(highlight_overlay.tobytes(), 
+                                            img_w, img_h,
+                                            img_w * 3,
+                                            QImage.Format_RGB888)
+                    
+                    # Draw highlighted cell area with transparency
+                    painter.save()
+                    painter.setOpacity(0.5)  # Semi-transparent so we can see the cell
+                    painter.drawImage(visibleRect, highlight_qimage, scaledVisibleRect)
+                    painter.restore()
+            
+            # Draw white circles for marked cells from all frames (to help trace the track)
+            if self.track_correction_circles:
+                circle_radius = self.track_correction_circle_size  # pixels in image coordinates (adjustable)
+                scale_x = visibleRect.width() / scaledVisibleRect.width() if scaledVisibleRect.width() > 0 else 1.0
+                scale_y = visibleRect.height() / scaledVisibleRect.height() if scaledVisibleRect.height() > 0 else 1.0
+                
+                # Draw circles from all frames (white, with different opacity for current vs other frames)
+                for frame_idx, circles in self.track_correction_circles.items():
+                    painter.save()
+                    if frame_idx == current_frame_idx:
+                        # Current frame: bright white, thicker
+                        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 3))
+                        painter.setOpacity(1.0)
+                    else:
+                        # Other frames: dimmer white, thinner (to show track history)
+                        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                        painter.setOpacity(0.6)
+                    painter.setBrush(QtCore.Qt.NoBrush)
+                    
+                    for img_x, img_y in circles:
+                        # Convert image coordinates to widget coordinates
+                        widget_x = visibleRect.x() + (img_x - scaledVisibleRect.x()) * scale_x
+                        widget_y = visibleRect.y() + (img_y - scaledVisibleRect.y()) * scale_y
+                        
+                        # Draw circle (radius in widget coordinates)
+                        widget_radius = circle_radius * scale_x
+                        painter.drawEllipse(int(widget_x - widget_radius), int(widget_y - widget_radius), 
+                                           int(widget_radius * 2), int(widget_radius * 2))
+                    
+                    painter.restore()
+        except Exception as e:
+            logger.error(f'Error drawing track correction overlays: {e}')
+            traceback.print_exc()
+    
 if __name__ == '__main__':
     import sys
     from qtpy.QtWidgets import QApplication

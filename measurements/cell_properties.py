@@ -29,10 +29,10 @@ from measurements.nematic_measurements import compute_polarity_nematic
 from measurements.measurements3D.get_point_on_surface_if_centroid_is_bad import point_on_surface
 from measurements.measurements3D.measures3D import compute_3D_surfacearea, perimeter_3D
 from measurements.measurements3D.triangulate import triangulate
-from tracking.rapid_detection_of_vertices import detect_vertices_and_bonds, cantor_color_bonds, neighbors8
+from tracking.correction.rapid_detection_of_vertices import detect_vertices_and_bonds, cantor_color_bonds, neighbors8
 from timeit import default_timer as timer
-from tracking.tools import smart_name_parser
-from tracking.tracking_error_detector_and_fixer import get_border_cells, get_border_cells_plus_one, \
+from tracking.utils.tools import smart_name_parser
+from tracking.correction.tracking_error_detector_and_fixer import get_border_cells, get_border_cells_plus_one, \
     get_cells_and_their_neighbors_from_image
 from utils.rps_tools import pavlidis, compute_distance_between_consecutive_points
 from math import sqrt, atan, degrees

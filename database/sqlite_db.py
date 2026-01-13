@@ -21,7 +21,7 @@ from selections.selection import convert_coords_to_IDs
 from utils.early_stopper import early_stop
 from utils.logger import TA_logger
 from utils.list_utils import smart_TA_list, loadlist
-from tracking.tools import smart_name_parser
+from tracking.utils.tools import smart_name_parser
 import pandas as pd
 from pathlib import Path
 
@@ -1667,7 +1667,7 @@ def get_master_db_path(file_list):
         return None
     
     try:
-        from tracking.tools import smart_name_parser
+        from tracking.utils.tools import smart_name_parser
         import os
         
         # Get the main folder (parent of the TA folder containing the first frame)
@@ -1692,6 +1692,278 @@ def get_master_db_path(file_list):
         logger.error(f'Error getting master DB path: {e}')
         traceback.print_exc()
         return None
+
+
+def save_manual_landmarks(db_path, landmarks_dict, cell_label=None):
+    """
+    Save manual registration landmarks to database.
+    
+    Args:
+        db_path (str): Path to master database
+        landmarks_dict (dict): Dictionary mapping frame_filename to (y, x) centroid tuples
+            Example: {'Image0006': (100.5, 200.3), 'Image0007': (102.1, 201.8), ...}
+        cell_label (str, optional): User-friendly label for this landmark track (e.g., "Cell 1")
+    
+    Returns:
+        int: landmark_id of the saved track, or None if error
+    """
+    if not landmarks_dict:
+        logger.warning('No landmarks to save')
+        return None
+    
+    db = None
+    try:
+        db = TAsql(db_path)
+        
+        # Create table if it doesn't exist, or migrate if it has old structure
+        if 'manual_registration_landmarks' not in db.get_tables():
+            # Use a separate row_id as PRIMARY KEY, and landmark_id as a regular INTEGER
+            # This allows multiple rows (one per frame) to have the same landmark_id
+            db.create_table(
+                'manual_registration_landmarks',
+                ['row_id', 'landmark_id', 'cell_label', 'frame_filename', 'centroid_y', 'centroid_x', 'created_at'],
+                column_types=['INTEGER PRIMARY KEY AUTOINCREMENT', 'INTEGER', 'TEXT', 'TEXT', 'REAL', 'REAL', 'TEXT']
+            )
+            # Create index on landmark_id for faster queries
+            try:
+                db.cur.execute('CREATE INDEX IF NOT EXISTS idx_landmark_id ON manual_registration_landmarks(landmark_id)')
+                db.con.commit()
+            except:
+                pass
+        else:
+            # Table exists - check if it has the old structure (landmark_id as PRIMARY KEY)
+            # If so, we need to migrate it
+            try:
+                # Check if row_id column exists
+                db.cur.execute("PRAGMA table_info(manual_registration_landmarks)")
+                columns = [row[1] for row in db.cur.fetchall()]
+                if 'row_id' not in columns:
+                    # Old structure - need to migrate
+                    logger.warning('Migrating manual_registration_landmarks table to new structure...')
+                    # Create new table with correct structure
+                    db.cur.execute('''
+                        CREATE TABLE manual_registration_landmarks_new (
+                            row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            landmark_id INTEGER,
+                            cell_label TEXT,
+                            frame_filename TEXT,
+                            centroid_y REAL,
+                            centroid_x REAL,
+                            created_at TEXT
+                        )
+                    ''')
+                    # Copy data from old table
+                    db.cur.execute('''
+                        INSERT INTO manual_registration_landmarks_new 
+                        (landmark_id, cell_label, frame_filename, centroid_y, centroid_x, created_at)
+                        SELECT landmark_id, cell_label, frame_filename, centroid_y, centroid_x, created_at
+                        FROM manual_registration_landmarks
+                    ''')
+                    # Drop old table and rename new one
+                    db.cur.execute('DROP TABLE manual_registration_landmarks')
+                    db.cur.execute('ALTER TABLE manual_registration_landmarks_new RENAME TO manual_registration_landmarks')
+                    # Create index
+                    db.cur.execute('CREATE INDEX IF NOT EXISTS idx_landmark_id ON manual_registration_landmarks(landmark_id)')
+                    db.con.commit()
+                    logger.info('Migration completed successfully')
+            except Exception as e:
+                logger.warning(f'Could not migrate table (may already be correct): {e}')
+                db.con.rollback()
+        
+        # Use a transaction to ensure atomicity and avoid race conditions
+        from datetime import datetime
+        timestamp = datetime.now().isoformat()
+        
+        # Start transaction
+        db.con.execute('BEGIN TRANSACTION')
+        
+        try:
+            # Insert first landmark without specifying landmark_id to let SQLite auto-assign it
+            # Then use that same ID for all remaining landmarks in the track
+            frame_filenames = list(landmarks_dict.keys())
+            landmark_id = None
+            
+            for idx, (frame_filename, (y, x)) in enumerate(landmarks_dict.items()):
+                # Escape single quotes
+                frame_filename_escaped = frame_filename.replace("'", "''")
+                cell_label_escaped = cell_label.replace("'", "''") if cell_label else 'NULL'
+                if cell_label_escaped != 'NULL':
+                    cell_label_escaped = f"'{cell_label_escaped}'"
+                
+                if idx == 0:
+                    # First row: let SQLite auto-assign landmark_id
+                    query = f"INSERT INTO manual_registration_landmarks (cell_label, frame_filename, centroid_y, centroid_x, created_at) VALUES ({cell_label_escaped}, '{frame_filename_escaped}', {float(y)}, {float(x)}, '{timestamp}')"
+                    db.cur.execute(query)
+                    # Get the auto-assigned landmark_id
+                    landmark_id = db.cur.lastrowid
+                    if landmark_id is None or landmark_id == 0:
+                        # Fallback: query the sequence
+                        result = db.run_SQL_command_and_get_results('SELECT last_insert_rowid()')
+                        if result and result[0][0]:
+                            landmark_id = result[0][0]
+                        else:
+                            raise ValueError('Could not get auto-assigned landmark_id')
+                else:
+                    # Subsequent rows: use the same landmark_id
+                    query = f"INSERT INTO manual_registration_landmarks (landmark_id, cell_label, frame_filename, centroid_y, centroid_x, created_at) VALUES ({landmark_id}, {cell_label_escaped}, '{frame_filename_escaped}', {float(y)}, {float(x)}, '{timestamp}')"
+                    db.cur.execute(query)
+            
+            # Commit transaction
+            db.con.commit()
+        except Exception as e:
+            # Rollback on error
+            db.con.rollback()
+            raise
+        
+        logger.info(f'Saved {len(landmarks_dict)} landmarks for landmark_id {landmark_id}')
+        return landmark_id
+        
+    except Exception as e:
+        logger.error(f'Error saving manual landmarks: {e}')
+        traceback.print_exc()
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except:
+                pass
+
+
+def load_manual_landmarks(db_path, landmark_id=None):
+    """
+    Load manual registration landmarks from database.
+    
+    Args:
+        db_path (str): Path to master database
+        landmark_id (int, optional): Specific landmark_id to load. If None, loads all.
+    
+    Returns:
+        dict: {landmark_id: {frame_filename: (y, x), ...}, ...}
+            If landmark_id provided, returns single dict: {frame_filename: (y, x), ...}
+    """
+    db = None
+    try:
+        db = TAsql(db_path)
+        
+        if 'manual_registration_landmarks' not in db.get_tables():
+            return {} if landmark_id is None else {}
+        
+        if landmark_id is not None:
+            # Load specific landmark track
+            query = f'SELECT frame_filename, centroid_y, centroid_x FROM manual_registration_landmarks WHERE landmark_id = {landmark_id} ORDER BY frame_filename'
+            results = db.run_SQL_command_and_get_results(query)
+            
+            if not results:
+                return {}
+            
+            landmarks = {}
+            for frame_filename, y, x in results:
+                landmarks[frame_filename] = (float(y), float(x))
+            return landmarks
+        else:
+            # Load all landmark tracks
+            query = 'SELECT landmark_id, frame_filename, centroid_y, centroid_x FROM manual_registration_landmarks ORDER BY landmark_id, frame_filename'
+            results = db.run_SQL_command_and_get_results(query)
+            
+            if not results:
+                return {}
+            
+            all_tracks = {}
+            for lid, frame_filename, y, x in results:
+                if lid not in all_tracks:
+                    all_tracks[lid] = {}
+                all_tracks[lid][frame_filename] = (float(y), float(x))
+            return all_tracks
+        
+    except Exception as e:
+        logger.error(f'Error loading manual landmarks: {e}')
+        traceback.print_exc()
+        return {} if landmark_id is None else {}
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except:
+                pass
+
+
+def get_landmarks_for_frame_pair(db_path, frame_t0, frame_t1):
+    """
+    Get landmarks for a consecutive frame pair from all landmark tracks.
+    
+    Args:
+        db_path (str): Path to master database
+        frame_t0 (str): Filename without extension for frame t0
+        frame_t1 (str): Filename without extension for frame t1
+    
+    Returns:
+        tuple: (landmarks_t0, landmarks_t1) where each is a list of (y, x) tuples
+            Returns (None, None) if no landmarks found or insufficient data
+    """
+    db = None
+    try:
+        db = TAsql(db_path)
+        
+        if 'manual_registration_landmarks' not in db.get_tables():
+            return (None, None)
+        
+        # Get all landmark tracks that have both frames
+        # Escape single quotes in frame names for SQL
+        frame_t0_escaped = frame_t0.replace("'", "''")
+        frame_t1_escaped = frame_t1.replace("'", "''")
+        
+        query = f'''
+            SELECT DISTINCT landmark_id 
+            FROM manual_registration_landmarks 
+            WHERE landmark_id IS NOT NULL
+              AND (frame_filename = '{frame_t0_escaped}' OR frame_filename = '{frame_t1_escaped}')
+        '''
+        landmark_ids = db.run_SQL_command_and_get_results(query)
+        
+        if not landmark_ids:
+            return (None, None)
+        
+        landmarks_t0 = []
+        landmarks_t1 = []
+        
+        # For each landmark track, get coordinates for both frames
+        for (lid,) in landmark_ids:
+            query = f"SELECT frame_filename, centroid_y, centroid_x FROM manual_registration_landmarks WHERE landmark_id = {lid} AND (frame_filename = '{frame_t0_escaped}' OR frame_filename = '{frame_t1_escaped}')"
+            results = db.run_SQL_command_and_get_results(query)
+            
+            if not results:
+                continue
+                
+            t0_coord = None
+            t1_coord = None
+            
+            for frame_filename, y, x in results:
+                if frame_filename == frame_t0:
+                    t0_coord = (float(y), float(x))
+                elif frame_filename == frame_t1:
+                    t1_coord = (float(y), float(x))
+            
+            # Only add if both frames have landmarks for this track
+            if t0_coord is not None and t1_coord is not None:
+                landmarks_t0.append(t0_coord)
+                landmarks_t1.append(t1_coord)
+        
+        if len(landmarks_t0) >= 3:
+            return (landmarks_t0, landmarks_t1)
+        else:
+            return (None, None)
+        
+    except Exception as e:
+        logger.error(f'Error getting landmarks for frame pair: {e}')
+        traceback.print_exc()
+        return (None, None)
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except:
+                pass
 
 
 # TODO KEEP MEGA URGENT do force_track_cells_db_update for bonds and vertices when the tracking will be implemented.

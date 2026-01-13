@@ -61,6 +61,23 @@ class TrackingDialog(QDialog):
             pyramidal_layout.addStretch()
             main_panel.layout().addLayout(pyramidal_layout)
 
+            # Threshold translation parameter
+            threshold_translation_layout = QHBoxLayout()
+            threshold_translation_label = QLabel("Translation threshold:")
+            threshold_translation_label.setToolTip(
+                "Maximum translation (in pixels) to accept during pyramidal registration (1-200).\n"
+                "Translations larger than this are rejected as likely errors.\n"
+                "Increase for tissues with large jumps between frames.\n"
+                "Default: 20 pixels")
+            self.threshold_translation = QSpinBox()
+            self.threshold_translation.setMinimum(1)
+            self.threshold_translation.setMaximum(200)
+            self.threshold_translation.setValue(20)
+            threshold_translation_layout.addWidget(threshold_translation_label)
+            threshold_translation_layout.addWidget(self.threshold_translation)
+            threshold_translation_layout.addStretch()
+            main_panel.layout().addLayout(threshold_translation_layout)
+
             # Max iterations parameter
             max_iter_layout = QHBoxLayout()
             max_iter_label = QLabel("Max optimization iterations:")
@@ -113,6 +130,23 @@ class TrackingDialog(QDialog):
             pyramidal_layout.addStretch()
             dynamic_layout.addLayout(pyramidal_layout)
 
+            # Threshold translation parameter
+            threshold_translation_layout = QHBoxLayout()
+            threshold_translation_label = QLabel("Translation threshold:")
+            threshold_translation_label.setToolTip(
+                "Maximum translation (in pixels) to accept during pyramidal registration (1-200).\n"
+                "Translations larger than this are rejected as likely errors.\n"
+                "Increase for tissues with large jumps between frames.\n"
+                "Default: 20 pixels")
+            self.threshold_translation = QSpinBox()
+            self.threshold_translation.setMinimum(1)
+            self.threshold_translation.setMaximum(200)
+            self.threshold_translation.setValue(20)
+            threshold_translation_layout.addWidget(threshold_translation_label)
+            threshold_translation_layout.addWidget(self.threshold_translation)
+            threshold_translation_layout.addStretch()
+            dynamic_layout.addLayout(threshold_translation_layout)
+
             # Max iterations parameter
             max_iter_layout = QHBoxLayout()
             max_iter_label = QLabel("Max optimization iterations:")
@@ -139,12 +173,12 @@ class TrackingDialog(QDialog):
         if self.mode == 'static':
             return (self.b1.isChecked(), self.c1.isChecked())
         elif self.mode == 'dynamic':
-            return (self.pyramidal_depth.value(), self.max_iter.value())
+            return (self.pyramidal_depth.value(), self.threshold_translation.value(), self.max_iter.value())
         else:
             # Return all values: static first, then dynamic
             return (
                 (self.b1.isChecked(), self.c1.isChecked()),
-                (self.pyramidal_depth.value(), self.max_iter.value())
+                (self.pyramidal_depth.value(), self.threshold_translation.value(), self.max_iter.value())
             )
 
     # static method to create the dialog and return (values, accepted)

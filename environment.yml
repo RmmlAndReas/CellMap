@@ -24,5 +24,8 @@ dependencies:
     - pyperclip
     - prettytable
     - numba
+    - networkx>=2.0  # Required for MCSTracker
+    - mahotas  # Required for MCSTracker mesh creation
+    - pyhull
     - -e .
 

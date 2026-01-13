@@ -17,13 +17,13 @@ from qtpy.QtWidgets import QApplication
 from numba import njit, jit
 from utils.image_io import Img
 from utils.image_utils import RGB_to_int24, int24_to_RGB
-from tracking.rapid_detection_of_vertices import neighbors8
+from tracking.correction.rapid_detection_of_vertices import neighbors8
 from utils.early_stopper import early_stop
 from utils.list_utils import loadlist
 from colors.colorgen import r_g_b_from_rgb, r_g_b_to_rgb
 from gui.widgets.multi_image_viewer import ImgDisplayWindow
 from utils.luts import apply_lut, matplotlib_to_TA
-from tracking.tools import get_n_files_from_list, smart_name_parser
+from tracking.utils.tools import get_n_files_from_list, smart_name_parser
 from timeit import default_timer as timer
 import numpy as np
 from skimage.measure import label, regionprops

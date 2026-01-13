@@ -8,7 +8,7 @@ import os
 
 # parameters
 from utils.list_utils import loadlist
-from tracking.rapid_detection_of_vertices import associate_vertices_to_cells, detect_vertices_and_bonds
+from tracking.correction.rapid_detection_of_vertices import associate_vertices_to_cells, detect_vertices_and_bonds
 
 __DEBUG__ = False
 
