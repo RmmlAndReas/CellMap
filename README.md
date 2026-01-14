@@ -11,21 +11,38 @@ CellMap is a Python-based software for cell segmentation and tracking in time-la
 - **SQLite database** - Store and query measurement data
 - **Graphical user interface** - Easy-to-use GUI built with PyQt
 
-## Installation
+## Installation & Integration
 
-1. Clone the repository:
-```bash
-git clone https://github.com/RmmlAndReas/CellMap
-cd CellMap
-```
+To integrate CellMap into your workflow, follow these steps:
 
-2. Install [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) (if not already installed)
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/RmmlAndReas/CellMap
+   cd CellMap
+   ```
 
-3. Create and activate conda environment from the environment file:
-```bash
-conda env create -f environment.yml
-conda activate CellMap
-```
+2. **Install [Miniconda](https://docs.anaconda.com/free/miniconda/index.html)** (if not already installed).
+
+   *Note for Windows users:* Microsoft Visual C++ 14.0 or greater is required. Download it here: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+
+3. **Create and activate the conda environment:**
+   ```bash
+   conda env create -f environment.yml
+   conda activate CellMap
+   ```
+
+4. **Integrate CellMap into your analysis:**  
+   After activation, you can launch CellMap via the command line or import it as a Python package within your own scripts:
+   ```bash
+   python -m cellmap
+   ```
+   or inside Python:
+   ```python
+   import cellmap
+   # Initialize and use CellMap functionality in your pipeline
+   ```
+
+CellMap can now be integrated into your data analysis pipelines or used as a standalone application.
 
 ## Usage
 
