@@ -13,19 +13,18 @@ dependencies:
   - matplotlib>=3.5.2
   - pillow>=8.1.2
   - pyqt6
+  - cellpose  # Install first - will pull in compatible pytorch/torchvision
+  - tifffile>=2021.11.2
+  - qtawesome
+  - qtpy>=2.1.0
+  - tqdm
+  - natsort
+  - pyperclip
+  - prettytable
+  - numba
+  - networkx>=2.0  # Required for MCSTracker
+  - mahotas  # Required for MCSTracker mesh creation
+  - pyhull
   - pip
   - pip:
-    - cellpose
-    - tifffile>=2021.11.2
-    - qtawesome
-    - QtPy>=2.1.0
-    - tqdm
-    - natsort
-    - pyperclip
-    - prettytable
-    - numba
-    - networkx>=2.0  # Required for MCSTracker
-    - mahotas  # Required for MCSTracker mesh creation
-    - pyhull
-    - -e .
-
+    - -e .  # Install this package in editable mode to create 'cellmap' command
